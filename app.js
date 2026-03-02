@@ -1,41 +1,291 @@
+// ── File System helpers (IndexedDB stores the file handle between sessions) ────
+
+let fileHandle = null; // the FileSystemFileHandle for database.json
+let dbData     = null; // in-memory mirror of the file
+let writeTimer = null; // debounce timer for file writes
+
+const HANDLE_STORE = 'calTracker_handle';
+
+function openIDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('calTrackerDB', 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('handles');
+    req.onsuccess  = e => resolve(e.target.result);
+    req.onerror    = e => reject(e.target.error);
+  });
+}
+
+async function saveHandleToIDB(handle) {
+  try {
+    const db = await openIDB();
+    const tx = db.transaction('handles', 'readwrite');
+    tx.objectStore('handles').put(handle, HANDLE_STORE);
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = e => rej(e.target.error); });
+  } catch { /* non-fatal */ }
+}
+
+async function loadHandleFromIDB() {
+  try {
+    const db  = await openIDB();
+    const tx  = db.transaction('handles', 'readonly');
+    const req = tx.objectStore('handles').get(HANDLE_STORE);
+    return await new Promise((res, rej) => { req.onsuccess = e => res(e.target.result); req.onerror = e => rej(e.target.error); });
+  } catch { return null; }
+}
+
+// ── Read / write the JSON file ────────────────────────────────────────────────
+
+const BLANK_DB = () => ({
+  activeProfile: 'Me',
+  profiles: {
+    Me: { goal: 2000, days: {}, planStats: null },
+  },
+});
+
+async function readFromFile() {
+  const file = await fileHandle.getFile();
+  const text = await file.text();
+  try {
+    dbData = JSON.parse(text);
+    if (!dbData.profiles)      dbData.profiles = {};
+    if (!dbData.activeProfile) dbData.activeProfile = Object.keys(dbData.profiles)[0] || 'Me';
+    if (!dbData.profiles[dbData.activeProfile]) {
+      dbData.profiles[dbData.activeProfile] = { goal: 2000, days: {}, planStats: null };
+    }
+  } catch {
+    dbData = BLANK_DB();
+  }
+}
+
+async function writeToFile() {
+  if (!fileHandle) return;
+  try {
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify(dbData, null, 2));
+    await writable.close();
+  } catch (err) {
+    console.error('File write error:', err);
+  }
+}
+
+function scheduleWrite() {
+  clearTimeout(writeTimer);
+  writeTimer = setTimeout(writeToFile, 250);
+}
+
+// ── Database overlay UI ───────────────────────────────────────────────────────
+
+function showOverlay() {
+  document.getElementById('db-overlay').style.display = 'flex';
+  document.getElementById('app').classList.add('hidden');
+}
+
+function hideOverlay() {
+  document.getElementById('db-overlay').style.display = 'none';
+  document.getElementById('app').classList.remove('hidden');
+}
+
+function setDbError(msg) {
+  document.getElementById('db-error').textContent = msg;
+}
+
+async function tryRestoreSavedHandle() {
+  const handle = await loadHandleFromIDB();
+  if (!handle) return false;
+
+  const perm = await handle.queryPermission({ mode: 'readwrite' });
+  if (perm === 'granted') {
+    fileHandle = handle;
+    await readFromFile();
+    return true;
+  }
+  if (perm === 'prompt') {
+    // Show one-click "continue with" button
+    document.getElementById('db-filename').textContent = handle.name;
+    document.getElementById('db-restore').classList.remove('hidden');
+    document.getElementById('db-restore-btn').onclick = async () => {
+      const granted = await handle.requestPermission({ mode: 'readwrite' });
+      if (granted === 'granted') {
+        fileHandle = handle;
+        await readFromFile();
+        await saveHandleToIDB(handle);
+        hideOverlay();
+        initApp();
+      } else {
+        setDbError('Permission denied — please open the file manually.');
+      }
+    };
+  }
+  return false;
+}
+
+async function pickExistingFile() {
+  try {
+    [fileHandle] = await window.showOpenFilePicker({
+      types: [{ description: 'JSON Database', accept: { 'application/json': ['.json'] } }],
+      multiple: false,
+    });
+    await readFromFile();
+    await saveHandleToIDB(fileHandle);
+    hideOverlay();
+    initApp();
+  } catch (err) {
+    if (err.name !== 'AbortError') setDbError('Could not open file. Please try again.');
+  }
+}
+
+async function createNewFile() {
+  try {
+    fileHandle = await window.showSaveFilePicker({
+      suggestedName: 'calories-database.json',
+      types: [{ description: 'JSON Database', accept: { 'application/json': ['.json'] } }],
+    });
+    // Start fresh, but migrate old localStorage data if present
+    const oldRaw = localStorage.getItem('calorieTracker');
+    if (oldRaw) {
+      try {
+        const old = JSON.parse(oldRaw);
+        dbData = {
+          activeProfile: 'Me',
+          profiles: { Me: { goal: old.goal || 2000, days: old.days || {}, planStats: old.planStats || null } },
+        };
+      } catch { dbData = BLANK_DB(); }
+    } else {
+      dbData = BLANK_DB();
+    }
+    await writeToFile();
+    await saveHandleToIDB(fileHandle);
+    hideOverlay();
+    initApp();
+  } catch (err) {
+    if (err.name !== 'AbortError') setDbError('Could not create file. Please try again.');
+  }
+}
+
+function initOverlay() {
+  if (!window.showOpenFilePicker) {
+    // Browser doesn't support File System Access API
+    document.querySelector('.db-actions').innerHTML = `
+      <p style="color:#fc8181;font-size:0.9rem">
+        This feature requires <strong>Chrome</strong> or <strong>Edge</strong>.<br>
+        Please open the app in one of those browsers.
+      </p>`;
+    return;
+  }
+  document.getElementById('db-open-btn').addEventListener('click',   pickExistingFile);
+  document.getElementById('db-create-btn').addEventListener('click', createNewFile);
+}
+
+// ── Profile management ────────────────────────────────────────────────────────
+
+function getProfileNames()    { return Object.keys(dbData.profiles); }
+function getActiveProfile()   { return dbData.activeProfile; }
+
+function setActiveProfile(name) {
+  dbData.activeProfile = name;
+  scheduleWrite();
+}
+
 // ── Data layer ────────────────────────────────────────────────────────────────
 
 function getToday() {
-  return new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  return new Date().toISOString().slice(0, 10);
 }
 
 function loadData() {
-  const raw = localStorage.getItem('calorieTracker');
-  return raw ? JSON.parse(raw) : { goal: 2000, days: {} };
+  return dbData.profiles[getActiveProfile()] || { goal: 2000, days: {} };
 }
 
-function saveData(data) {
-  localStorage.setItem('calorieTracker', JSON.stringify(data));
+function saveData(profileData) {
+  dbData.profiles[getActiveProfile()] = profileData;
+  scheduleWrite();
 }
 
 function getTodayEntries() {
-  const data = loadData();
-  return data.days[getToday()] || [];
+  return loadData().days[getToday()] || [];
+}
+
+// ── Profile bar UI ────────────────────────────────────────────────────────────
+
+function renderProfileBar() {
+  const names  = getProfileNames();
+  const active = getActiveProfile();
+  const bar    = document.getElementById('profile-bar');
+  bar.innerHTML = '';
+
+  names.forEach(name => {
+    const tab = document.createElement('div');
+    tab.className = 'profile-tab' + (name === active ? ' active' : '');
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = name;
+    tab.appendChild(nameSpan);
+
+    if (names.length > 1) {
+      const del = document.createElement('button');
+      del.className = 'profile-del';
+      del.textContent = '×';
+      del.title = `Delete "${name}"`;
+      del.addEventListener('click', e => { e.stopPropagation(); deleteProfile(name); });
+      tab.appendChild(del);
+    }
+
+    tab.addEventListener('click', () => switchProfile(name));
+    bar.appendChild(tab);
+  });
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'profile-add';
+  addBtn.textContent = '+';
+  addBtn.title = 'Add profile';
+  addBtn.addEventListener('click', addProfile);
+  bar.appendChild(addBtn);
+}
+
+function switchProfile(name) {
+  setActiveProfile(name);
+  renderProfileBar();
+  renderAll();
+}
+
+function addProfile() {
+  const name = window.prompt('Name for new profile:')?.trim();
+  if (!name) return;
+  if (dbData.profiles[name]) { alert(`"${name}" already exists.`); return; }
+  dbData.profiles[name] = { goal: 2000, days: {}, planStats: null };
+  switchProfile(name);
+}
+
+function deleteProfile(name) {
+  const names = getProfileNames();
+  if (names.length <= 1) return;
+  if (!confirm(`Delete profile "${name}" and all its data? This cannot be undone.`)) return;
+  const idx = names.indexOf(name);
+  delete dbData.profiles[name];
+  const remaining = getProfileNames();
+  const newActive = remaining[Math.min(idx, remaining.length - 1)];
+  scheduleWrite();
+  switchProfile(newActive);
 }
 
 // ── Goal & progress bar ───────────────────────────────────────────────────────
 
 function setGoal() {
   const input = document.getElementById('goal-input');
-  const val = parseInt(input.value, 10);
+  const val   = parseInt(input.value, 10);
   if (!val || val < 1) return;
   const data = loadData();
-  data.goal = val;
+  data.goal  = val;
   saveData(data);
   renderProgress();
 }
 
 function renderProgress() {
-  const data = loadData();
+  const data    = loadData();
   const entries = getTodayEntries();
-  const total = entries.reduce((sum, e) => sum + e.calories, 0);
-  const goal = data.goal || 2000;
-  const pct = Math.min((total / goal) * 100, 100);
+  const total   = entries.reduce((sum, e) => sum + e.calories, 0);
+  const goal    = data.goal || 2000;
+  const pct     = Math.min((total / goal) * 100, 100);
 
   const fill = document.getElementById('progress-bar-fill');
   fill.style.width = pct + '%';
@@ -46,70 +296,181 @@ function renderProgress() {
   document.getElementById('progress-label').textContent =
     `${total.toLocaleString()} / ${goal.toLocaleString()} kcal`;
 
-  // Keep goal input in sync
   const goalInput = document.getElementById('goal-input');
   if (!goalInput.matches(':focus')) goalInput.value = goal;
 }
 
-// ── Food search (Open Food Facts API) ────────────────────────────────────────
+// ── Local food database (always-available fallback) ───────────────────────────
+
+const LOCAL_DB = [
+  { name: 'Chicken breast, cooked',        kcalPer100g: 165 },
+  { name: 'Chicken thigh, cooked',         kcalPer100g: 209 },
+  { name: 'Chicken drumstick, cooked',     kcalPer100g: 172 },
+  { name: 'Chicken wings, cooked',         kcalPer100g: 290 },
+  { name: 'Ground beef, 80% lean, cooked', kcalPer100g: 254 },
+  { name: 'Ground beef, 93% lean, cooked', kcalPer100g: 218 },
+  { name: 'Steak, sirloin, cooked',        kcalPer100g: 207 },
+  { name: 'Steak, ribeye, cooked',         kcalPer100g: 291 },
+  { name: 'Pork chop, cooked',             kcalPer100g: 231 },
+  { name: 'Bacon, cooked',                 kcalPer100g: 541 },
+  { name: 'Ham, cooked',                   kcalPer100g: 163 },
+  { name: 'Salmon, cooked',                kcalPer100g: 208 },
+  { name: 'Tuna, canned in water',         kcalPer100g: 116 },
+  { name: 'Shrimp, cooked',               kcalPer100g: 99  },
+  { name: 'Tilapia, cooked',              kcalPer100g: 128 },
+  { name: 'Egg, whole, cooked',            kcalPer100g: 155 },
+  { name: 'Egg white, cooked',             kcalPer100g: 52  },
+  { name: 'White rice, cooked',            kcalPer100g: 130 },
+  { name: 'Brown rice, cooked',            kcalPer100g: 112 },
+  { name: 'Pasta, cooked',                 kcalPer100g: 158 },
+  { name: 'Oatmeal, cooked',               kcalPer100g: 71  },
+  { name: 'Bread, white',                  kcalPer100g: 265 },
+  { name: 'Bread, whole wheat',            kcalPer100g: 247 },
+  { name: 'Bagel, plain',                  kcalPer100g: 270 },
+  { name: 'Tortilla, flour',               kcalPer100g: 312 },
+  { name: 'Potato, baked',                 kcalPer100g: 93  },
+  { name: 'Sweet potato, baked',           kcalPer100g: 90  },
+  { name: 'French fries',                  kcalPer100g: 312 },
+  { name: 'Broccoli, raw',                 kcalPer100g: 34  },
+  { name: 'Spinach, raw',                  kcalPer100g: 23  },
+  { name: 'Lettuce, romaine, raw',         kcalPer100g: 17  },
+  { name: 'Carrot, raw',                   kcalPer100g: 41  },
+  { name: 'Tomato, raw',                   kcalPer100g: 18  },
+  { name: 'Cucumber, raw',                 kcalPer100g: 15  },
+  { name: 'Bell pepper, raw',              kcalPer100g: 31  },
+  { name: 'Onion, raw',                    kcalPer100g: 40  },
+  { name: 'Corn, cooked',                  kcalPer100g: 96  },
+  { name: 'Black beans, cooked',           kcalPer100g: 132 },
+  { name: 'Lentils, cooked',               kcalPer100g: 116 },
+  { name: 'Apple',                          kcalPer100g: 52  },
+  { name: 'Banana',                         kcalPer100g: 89  },
+  { name: 'Orange',                         kcalPer100g: 47  },
+  { name: 'Strawberries',                   kcalPer100g: 32  },
+  { name: 'Blueberries',                    kcalPer100g: 57  },
+  { name: 'Grapes',                         kcalPer100g: 69  },
+  { name: 'Watermelon',                     kcalPer100g: 30  },
+  { name: 'Mango',                          kcalPer100g: 60  },
+  { name: 'Milk, whole',                    kcalPer100g: 61  },
+  { name: 'Milk, 2%',                       kcalPer100g: 50  },
+  { name: 'Milk, skim',                     kcalPer100g: 34  },
+  { name: 'Greek yogurt, plain, nonfat',    kcalPer100g: 59  },
+  { name: 'Cottage cheese, 2%',             kcalPer100g: 90  },
+  { name: 'Cheese, cheddar',               kcalPer100g: 402 },
+  { name: 'Cheese, mozzarella',            kcalPer100g: 280 },
+  { name: 'Cheese, parmesan',              kcalPer100g: 431 },
+  { name: 'Butter',                         kcalPer100g: 717 },
+  { name: 'Olive oil',                      kcalPer100g: 884 },
+  { name: 'Almonds',                        kcalPer100g: 579 },
+  { name: 'Walnuts',                        kcalPer100g: 654 },
+  { name: 'Cashews',                        kcalPer100g: 553 },
+  { name: 'Peanut butter',                  kcalPer100g: 588 },
+  { name: 'Avocado',                        kcalPer100g: 160 },
+  { name: 'Hummus',                         kcalPer100g: 166 },
+  { name: 'Pizza, cheese, frozen',          kcalPer100g: 266 },
+  { name: 'Hamburger with bun',             kcalPer100g: 275 },
+  { name: 'Hot dog with bun',              kcalPer100g: 290 },
+  { name: 'Dark chocolate, 70%',           kcalPer100g: 604 },
+  { name: 'Whey protein powder',           kcalPer100g: 375 },
+  { name: 'Orange juice',                   kcalPer100g: 45  },
+  { name: 'Apple juice',                    kcalPer100g: 46  },
+  { name: 'Whole milk latte',              kcalPer100g: 54  },
+  { name: 'Soda, cola',                    kcalPer100g: 42  },
+].map(f => ({ ...f, brand: 'Built-in' }));
+
+function searchLocalDB(query) {
+  const q = query.toLowerCase();
+  return LOCAL_DB.filter(f => f.name.toLowerCase().includes(q)).slice(0, 10);
+}
+
+// ── Online food search (USDA + Open Food Facts in parallel) ──────────────────
+
+async function fetchJSON(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
+async function searchUSDA(query) {
+  const params = new URLSearchParams({
+    query, dataType: 'SR Legacy,Survey (FNDDS),Branded', pageSize: 10, api_key: 'DEMO_KEY',
+  });
+  const json = await fetchJSON(`https://api.nal.usda.gov/fdc/v1/foods/search?${params}`, 7000);
+  return (json.foods || [])
+    .map(f => {
+      const n = f.foodNutrients?.find(n => n.nutrientName === 'Energy' && n.unitName?.toLowerCase() === 'kcal');
+      return n?.value > 0 ? { name: f.description?.trim(), brand: f.brandOwner?.trim() || f.brandName?.trim() || '', kcalPer100g: Math.round(n.value) } : null;
+    })
+    .filter(Boolean);
+}
+
+async function searchOpenFoodFacts(query) {
+  const params = new URLSearchParams({
+    action: 'process', search_terms: query, search_simple: 1, json: 1, page_size: 10,
+    fields: 'product_name,brands,nutriments',
+  });
+  const json = await fetchJSON(`https://world.openfoodfacts.org/cgi/search.pl?${params}`, 10000);
+  return (json.products || [])
+    .map(p => {
+      const kcal = p.nutriments?.['energy-kcal_100g'] ?? p.nutriments?.['energy-kcal'];
+      return kcal > 0 && p.product_name?.trim()
+        ? { name: p.product_name.trim(), brand: p.brands?.split(',')[0]?.trim() || '', kcalPer100g: Math.round(kcal) }
+        : null;
+    })
+    .filter(Boolean);
+}
+
+let searchCount = 0;
+
+function setSearchStatus(dbName, isFallback) {
+  const el = document.getElementById('search-status');
+  el.innerHTML = `Search #${searchCount} · <span class="status-db${isFallback ? ' fallback' : ''}">${dbName}</span>`;
+}
 
 async function searchFood() {
   const query = document.getElementById('search-input').value.trim();
   if (!query) return;
 
+  searchCount++;
   const resultsList = document.getElementById('search-results');
+  document.getElementById('search-status').textContent = '';
   resultsList.innerHTML = '<li style="color:#a0aec0;font-style:italic">Searching…</li>';
 
-  const params = new URLSearchParams({
-    query,
-    dataType: 'SR Legacy,Survey (FNDDS),Branded',
-    pageSize: 10,
-    api_key: 'DEMO_KEY',
-  });
+  // Race both APIs in parallel — take whichever responds first
+  const winner = await Promise.any([
+    searchUSDA(query).then(r => ({ results: r, source: 'USDA FoodData Central', fallback: false })),
+    searchOpenFoodFacts(query).then(r => ({ results: r, source: 'Open Food Facts', fallback: true })),
+  ]).catch(() => null);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const res = await fetch(
-      `https://api.nal.usda.gov/fdc/v1/foods/search?${params}`,
-      { signal: controller.signal }
-    );
-    clearTimeout(timeout);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    displaySearchResults(json.foods || []);
-  } catch (err) {
-    clearTimeout(timeout);
-    console.error('Food search error:', err);
-    const msg = err.name === 'AbortError'
-      ? 'Search timed out — try again.'
-      : 'Search failed — check your connection.';
-    resultsList.innerHTML = `<li style="color:#fc8181">${msg}</li>`;
+  if (winner) {
+    setSearchStatus(winner.source, winner.fallback);
+    displaySearchResults(winner.results);
+    return;
   }
+
+  // Both APIs failed — use built-in local database
+  const local = searchLocalDB(query);
+  setSearchStatus('Built-in database', true);
+  displaySearchResults(local);
 }
 
-function displaySearchResults(foods) {
+function displaySearchResults(results) {
   const list = document.getElementById('search-results');
   list.innerHTML = '';
 
-  // USDA foods: description, brandOwner, foodNutrients[{nutrientName, unitName, value}]
-  function getKcal(f) {
-    return f.foodNutrients?.find(n => n.nutrientName === 'Energy' && n.unitName?.toLowerCase() === 'kcal');
-  }
-
-  const valid = foods.filter(f => f.description?.trim() && getKcal(f)?.value > 0);
-
-  if (!valid.length) {
+  if (!results.length) {
     list.innerHTML = '<li style="color:#a0aec0;font-style:italic">No results found.</li>';
     return;
   }
 
-  valid.forEach(food => {
-    const name = food.description.trim();
-    const brand = food.brandOwner?.trim() || food.brandName?.trim() || '';
-    const kcalPer100g = Math.round(getKcal(food).value);
-
+  results.forEach(({ name, brand, kcalPer100g }) => {
     const li = document.createElement('li');
     li.innerHTML = `
       <div class="result-info">
@@ -118,9 +479,7 @@ function displaySearchResults(foods) {
       </div>
       <button class="add-result-btn">Add</button>
     `;
-    li.querySelector('button').addEventListener('click', () => {
-      addFoodFromSearch(name, kcalPer100g);
-    });
+    li.querySelector('button').addEventListener('click', () => addFoodFromSearch(name, kcalPer100g));
     list.appendChild(li);
   });
 }
@@ -129,14 +488,10 @@ function addFoodFromSearch(name, kcalPer100g) {
   const gramsStr = window.prompt(
     `How many grams of "${name}" did you eat?\n(${kcalPer100g} kcal per 100g)`
   );
-  if (gramsStr === null) return; // user cancelled
+  if (gramsStr === null) return;
   const grams = parseFloat(gramsStr);
-  if (!grams || grams <= 0) {
-    alert('Please enter a valid number of grams.');
-    return;
-  }
-  const calories = Math.round((grams / 100) * kcalPer100g);
-  addEntry(`${name} (${grams}g)`, calories);
+  if (!grams || grams <= 0) { alert('Please enter a valid number of grams.'); return; }
+  addEntry(`${name} (${grams}g)`, Math.round((grams / 100) * kcalPer100g));
   document.getElementById('search-results').innerHTML = '';
   document.getElementById('search-input').value = '';
 }
@@ -144,22 +499,14 @@ function addFoodFromSearch(name, kcalPer100g) {
 // ── Log management ────────────────────────────────────────────────────────────
 
 function addEntry(name, calories) {
-  const now = new Date();
-  const time = now.toLocaleTimeString('en-US', {
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  });
-  const entry = { id: Date.now(), time, name, calories };
-
-  const data = loadData();
+  const now  = new Date();
+  const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const data  = loadData();
   const today = getToday();
   if (!data.days[today]) data.days[today] = [];
-  data.days[today].push(entry);
+  data.days[today].push({ id: Date.now(), time, name, calories });
   saveData(data);
-
-  renderLog();
-  renderProgress();
-  renderHistory();
-  renderChart();
+  renderLog(); renderProgress(); renderHistory(); renderChart();
 }
 
 function addManualEntry() {
@@ -168,47 +515,35 @@ function addManualEntry() {
   const errEl     = document.getElementById('manual-error');
   errEl.textContent = '';
 
-  const name = nameInput.value.trim();
+  const name     = nameInput.value.trim();
   const calories = parseInt(calInput.value, 10);
 
-  if (!name) {
-    errEl.textContent = 'Please enter a food name.';
-    return;
-  }
-  if (!calories || calories < 1) {
-    errEl.textContent = 'Please enter a valid calorie amount.';
-    return;
-  }
+  if (!name)                    { errEl.textContent = 'Please enter a food name.'; return; }
+  if (!calories || calories < 1) { errEl.textContent = 'Please enter a valid calorie amount.'; return; }
 
   addEntry(name, calories);
   nameInput.value = '';
-  calInput.value = '';
+  calInput.value  = '';
 }
 
 function deleteEntry(id) {
-  const data = loadData();
+  const data  = loadData();
   const today = getToday();
   if (data.days[today]) {
     data.days[today] = data.days[today].filter(e => e.id !== id);
-    if (data.days[today].length === 0) delete data.days[today];
+    if (!data.days[today].length) delete data.days[today];
   }
   saveData(data);
-  renderLog();
-  renderProgress();
-  renderHistory();
-  renderChart();
+  renderLog(); renderProgress(); renderHistory(); renderChart();
 }
 
 function renderLog() {
   const entries = getTodayEntries();
-  const tbody = document.getElementById('log-body');
+  const tbody   = document.getElementById('log-body');
   tbody.innerHTML = '';
 
   if (!entries.length) {
-    tbody.innerHTML = `
-      <tr class="placeholder-row">
-        <td colspan="4">No meals logged yet.</td>
-      </tr>`;
+    tbody.innerHTML = '<tr class="placeholder-row"><td colspan="4">No meals logged yet.</td></tr>';
     document.getElementById('daily-total').textContent = 'Total: 0 kcal';
     return;
   }
@@ -219,17 +554,14 @@ function renderLog() {
       <td class="col-time">${escapeHtml(entry.time)}</td>
       <td>${escapeHtml(entry.name)}</td>
       <td class="col-kcal">${entry.calories.toLocaleString()}</td>
-      <td class="col-del">
-        <button class="delete-btn" title="Remove">×</button>
-      </td>
+      <td class="col-del"><button class="delete-btn" title="Remove">×</button></td>
     `;
     tr.querySelector('.delete-btn').addEventListener('click', () => deleteEntry(entry.id));
     tbody.appendChild(tr);
   });
 
   const total = entries.reduce((sum, e) => sum + e.calories, 0);
-  document.getElementById('daily-total').textContent =
-    `Total: ${total.toLocaleString()} kcal`;
+  document.getElementById('daily-total').textContent = `Total: ${total.toLocaleString()} kcal`;
 }
 
 // ── History & chart ───────────────────────────────────────────────────────────
@@ -247,34 +579,26 @@ function getLast7Days() {
 }
 
 function formatDate(isoStr) {
-  const [year, month, day] = isoStr.split('-');
-  const d = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const [y, m, d] = isoStr.split('-');
+  return new Date(+y, +m - 1, +d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function renderHistory() {
   const data = loadData();
-  const days = getLast7Days();
   const goal = data.goal || 2000;
-
   const list = document.getElementById('history-list');
   list.innerHTML = '';
 
-  // Show in reverse (most recent first)
-  [...days].reverse().forEach(dateKey => {
+  [...getLast7Days()].reverse().forEach(dateKey => {
     const entries = data.days[dateKey] || [];
-    if (!entries.length) return; // skip days with no data
-
-    const total = entries.reduce((sum, e) => sum + e.calories, 0);
+    if (!entries.length) return;
+    const total  = entries.reduce((sum, e) => sum + e.calories, 0);
     const isOver = total > goal;
-
     const li = document.createElement('li');
     li.innerHTML = `
       <span class="hist-date">${formatDate(dateKey)}</span>
       <span class="hist-kcal">${total.toLocaleString()} kcal</span>
-      <span class="hist-badge ${isOver ? 'over' : 'under'}">
-        ${isOver ? 'Over' : 'Under'}
-      </span>
+      <span class="hist-badge ${isOver ? 'over' : 'under'}">${isOver ? 'Over' : 'Under'}</span>
     `;
     list.appendChild(li);
   });
@@ -288,48 +612,25 @@ function renderChart() {
   const data = loadData();
   const days = getLast7Days();
   const goal = data.goal || 2000;
+  const labels       = days.map(formatDate);
+  const caloriesData = days.map(d => (data.days[d] || []).reduce((s, e) => s + e.calories, 0));
+  const goalData     = days.map(() => goal);
 
-  const labels = days.map(formatDate);
-  const caloriesData = days.map(d => {
-    const entries = data.days[d] || [];
-    return entries.reduce((sum, e) => sum + e.calories, 0);
-  });
-  const goalData = days.map(() => goal);
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
 
-  buildChart(labels, caloriesData, goalData);
-}
-
-function buildChart(labels, caloriesData, goalData) {
-  const canvas = document.getElementById('history-chart');
-
-  if (chartInstance) {
-    chartInstance.destroy();
-    chartInstance = null;
-  }
-
-  chartInstance = new Chart(canvas, {
+  chartInstance = new Chart(document.getElementById('history-chart'), {
     data: {
       labels,
       datasets: [
         {
-          type: 'bar',
-          label: 'Calories',
-          data: caloriesData,
-          backgroundColor: 'rgba(102, 126, 234, 0.7)',
-          borderColor: 'rgba(102, 126, 234, 1)',
-          borderWidth: 1,
-          borderRadius: 4,
+          type: 'bar', label: 'Calories', data: caloriesData,
+          backgroundColor: 'rgba(102,126,234,0.7)', borderColor: 'rgba(102,126,234,1)',
+          borderWidth: 1, borderRadius: 4,
         },
         {
-          type: 'line',
-          label: 'Goal',
-          data: goalData,
-          borderColor: '#fc8181',
-          borderDash: [6, 4],
-          borderWidth: 2,
-          pointRadius: 0,
-          fill: false,
-          tension: 0,
+          type: 'line', label: 'Goal', data: goalData,
+          borderColor: '#fc8181', borderDash: [6, 4], borderWidth: 2,
+          pointRadius: 0, fill: false, tension: 0,
         },
       ],
     },
@@ -338,19 +639,10 @@ function buildChart(labels, caloriesData, goalData) {
       interaction: { mode: 'index' },
       plugins: {
         legend: { position: 'top' },
-        tooltip: {
-          callbacks: {
-            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()} kcal`,
-          },
-        },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()} kcal` } },
       },
       scales: {
-        y: {
-          beginAtZero: true,
-          ticks: {
-            callback: val => `${val.toLocaleString()} kcal`,
-          },
-        },
+        y: { beginAtZero: true, ticks: { callback: val => `${val.toLocaleString()} kcal` } },
       },
     },
   });
@@ -368,26 +660,36 @@ function initPlanSection() {
       selectedSex = btn.dataset.val;
     });
   });
-
   document.getElementById('calc-plan-btn').addEventListener('click', calculatePlan);
+}
 
-  // Restore saved stats and auto-calculate if available
-  const data = loadData();
-  if (data.planStats) {
-    const s = data.planStats;
-    if (s.sex) {
-      selectedSex = s.sex;
-      document.querySelectorAll('#plan-section .seg-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.val === s.sex);
-      });
-    }
-    if (s.age)      document.getElementById('plan-age').value = s.age;
-    if (s.ft)       document.getElementById('plan-height-ft').value = s.ft;
-    if (s.inches != null) document.getElementById('plan-height-in').value = s.inches;
-    if (s.lbs)      document.getElementById('plan-weight').value = s.lbs;
-    if (s.activity) document.getElementById('plan-activity').value = s.activity;
-    calculatePlan();
+function restorePlanSection() {
+  selectedSex = 'male';
+  document.querySelectorAll('#plan-section .seg-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.val === 'male');
+  });
+  document.getElementById('plan-age').value       = '';
+  document.getElementById('plan-height-ft').value = '';
+  document.getElementById('plan-height-in').value = '';
+  document.getElementById('plan-weight').value    = '';
+  document.getElementById('plan-activity').value  = '1.55';
+  document.getElementById('plan-error').textContent = '';
+  document.getElementById('plan-results').classList.add('hidden');
+
+  const s = loadData().planStats;
+  if (!s) return;
+  if (s.sex) {
+    selectedSex = s.sex;
+    document.querySelectorAll('#plan-section .seg-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === s.sex);
+    });
   }
+  if (s.age)            document.getElementById('plan-age').value       = s.age;
+  if (s.ft)             document.getElementById('plan-height-ft').value = s.ft;
+  if (s.inches != null) document.getElementById('plan-height-in').value = s.inches;
+  if (s.lbs)            document.getElementById('plan-weight').value    = s.lbs;
+  if (s.activity)       document.getElementById('plan-activity').value  = s.activity;
+  calculatePlan();
 }
 
 function calculatePlan() {
@@ -398,102 +700,97 @@ function calculatePlan() {
   const activity = parseFloat(document.getElementById('plan-activity').value);
   const errEl    = document.getElementById('plan-error');
 
-  if (!age || age < 10 || age > 120)     { errEl.textContent = 'Enter a valid age (10–120).'; return; }
+  if (!age || age < 10 || age > 120)              { errEl.textContent = 'Enter a valid age (10–120).'; return; }
   if (!ft || ft < 1 || inches < 0 || inches > 11) { errEl.textContent = 'Enter a valid height (e.g. 5 ft 10 in).'; return; }
-  if (!lbs || lbs < 1)                   { errEl.textContent = 'Enter a valid weight in lbs.'; return; }
+  if (!lbs || lbs < 1)                            { errEl.textContent = 'Enter a valid weight in lbs.'; return; }
   errEl.textContent = '';
 
-  // Convert to metric for Mifflin-St Jeor
   const heightCm = (ft * 12 + inches) * 2.54;
   const weightKg = lbs * 0.453592;
-
-  const bmr = selectedSex === 'male'
+  const bmr      = selectedSex === 'male'
     ? 10 * weightKg + 6.25 * heightCm - 5 * age + 5
     : 10 * weightKg + 6.25 * heightCm - 5 * age - 161;
   const tdee     = Math.round(bmr * activity);
-  const cutKcal  = Math.max(tdee - 500, 1200); // floor at 1200 kcal
+  const cutKcal  = Math.max(tdee - 500, 1200);
   const bulkKcal = tdee + 300;
 
-  // Persist stats
   const data = loadData();
   data.planStats = { sex: selectedSex, age, ft, inches, lbs, activity };
   saveData(data);
 
-  // Update results
-  document.getElementById('tdee-value').textContent = tdee.toLocaleString();
-
+  document.getElementById('tdee-value').textContent  = tdee.toLocaleString();
   document.getElementById('cut-kcal').textContent    = `${cutKcal.toLocaleString()} kcal/day`;
-  const cutNote = cutKcal === 1200 ? '1,200 kcal minimum — consult a doctor' : '−500 kcal deficit · ~0.5 kg/week loss';
-  document.getElementById('cut-detail').textContent  = cutNote;
-
+  document.getElementById('cut-detail').textContent  = cutKcal === 1200
+    ? '1,200 kcal minimum — consult a doctor' : '−500 kcal deficit · ~0.5 kg/week loss';
   document.getElementById('bulk-kcal').textContent   = `${bulkKcal.toLocaleString()} kcal/day`;
   document.getElementById('bulk-detail').textContent = '+300 kcal surplus · ~0.3 kg/week gain';
-
-  document.getElementById('cut-apply-btn').onclick  = () => applyPlanGoal(cutKcal,  'cut');
-  document.getElementById('bulk-apply-btn').onclick = () => applyPlanGoal(bulkKcal, 'bulk');
-
+  document.getElementById('cut-apply-btn').onclick   = () => applyPlanGoal(cutKcal,  'cut');
+  document.getElementById('bulk-apply-btn').onclick  = () => applyPlanGoal(bulkKcal, 'bulk');
   document.getElementById('plan-results').classList.remove('hidden');
 }
 
 function applyPlanGoal(calories, type) {
   const data = loadData();
-  data.goal = calories;
+  data.goal  = calories;
   saveData(data);
   renderProgress();
-
   const btn = document.getElementById(type + '-apply-btn');
   btn.textContent = 'Goal Applied!';
   btn.disabled = true;
-  setTimeout(() => {
-    btn.textContent = 'Apply Goal';
-    btn.disabled = false;
-  }, 1500);
-
+  setTimeout(() => { btn.textContent = 'Apply Goal'; btn.disabled = false; }, 1500);
   document.getElementById('goal-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ── Render all (used when switching profiles) ─────────────────────────────────
+
+function renderAll() {
+  restorePlanSection();
+  renderLog();
+  renderProgress();
+  renderHistory();
+  renderChart();
+  document.getElementById('search-results').innerHTML = '';
+  document.getElementById('search-input').value = '';
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
 function escapeHtml(str) {
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ── Initialisation ────────────────────────────────────────────────────────────
+// ── App init (called after database file is loaded) ───────────────────────────
 
-function init() {
-  // Show today's date in the header
+function initApp() {
   document.getElementById('current-date').textContent =
     new Date().toLocaleDateString('en-US', {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     });
 
-  // Wire up buttons
   document.getElementById('set-goal-btn').addEventListener('click', setGoal);
-  document.getElementById('goal-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') setGoal();
-  });
-
+  document.getElementById('goal-input').addEventListener('keydown', e => { if (e.key === 'Enter') setGoal(); });
   document.getElementById('search-btn').addEventListener('click', searchFood);
-  document.getElementById('search-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') searchFood();
-  });
-
+  document.getElementById('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') searchFood(); });
   document.getElementById('add-manual-btn').addEventListener('click', addManualEntry);
-  document.getElementById('manual-calories').addEventListener('keydown', e => {
-    if (e.key === 'Enter') addManualEntry();
-  });
+  document.getElementById('manual-calories').addEventListener('keydown', e => { if (e.key === 'Enter') addManualEntry(); });
 
   initPlanSection();
-
-  // Initial render
-  renderLog();
-  renderProgress();
-  renderHistory();
-  renderChart();
+  renderProfileBar();
+  renderAll();
 }
 
-window.addEventListener('load', init);
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+
+window.addEventListener('load', async () => {
+  initOverlay();
+  showOverlay();
+
+  // Try to restore the previously used file handle
+  const restored = await tryRestoreSavedHandle();
+  if (restored) {
+    hideOverlay();
+    initApp();
+  }
+});

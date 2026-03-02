@@ -133,6 +133,22 @@ header p {
   font-size: 0.8rem;
 }
 
+#search-status {
+  font-size: 0.75rem;
+  color: #a0aec0;
+  margin: 4px 0 2px;
+  min-height: 1em;
+}
+
+#search-status .status-db {
+  font-weight: 600;
+  color: #667eea;
+}
+
+#search-status .status-db.fallback {
+  color: #ed8936;
+}
+
 .divider {
   text-align: center;
   color: #a0aec0;
@@ -411,6 +427,163 @@ button:active { background: #4c51bf; }
 .plan-card.cut  .plan-apply-btn:hover { background: #f56565; }
 .plan-card.bulk .plan-apply-btn       { background: #48bb78; }
 .plan-card.bulk .plan-apply-btn:hover { background: #38a169; }
+
+/* ── DB overlay ───────────────────────────────── */
+#db-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 20, 40, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+#db-modal {
+  background: #fff;
+  border-radius: 16px;
+  padding: 36px 32px;
+  max-width: 400px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.db-logo {
+  font-size: 2.4rem;
+  margin-bottom: 12px;
+}
+
+#db-modal h2 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #1a202c;
+  margin-bottom: 10px;
+}
+
+.db-subtitle {
+  color: #718096;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+
+.db-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.db-btn-primary {
+  background: #667eea;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.2s;
+}
+.db-btn-primary:hover { background: #5a67d8; }
+
+.db-btn-secondary {
+  background: #f7fafc;
+  color: #4a5568;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 11px 20px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.2s, border-color 0.2s;
+}
+.db-btn-secondary:hover { background: #edf2f7; border-color: #cbd5e0; }
+
+.db-or {
+  color: #a0aec0;
+  font-size: 0.82rem;
+  margin: 14px 0 0;
+}
+
+#db-restore { margin-bottom: 14px; }
+
+.db-error {
+  color: #fc8181;
+  font-size: 0.82rem;
+  min-height: 1.2em;
+  margin-bottom: 10px;
+}
+
+.db-hint {
+  color: #a0aec0;
+  font-size: 0.78rem;
+  margin-top: 16px;
+}
+
+/* App hidden until DB loaded */
+#app.hidden { display: none; }
+
+/* ── Profile bar ──────────────────────────────── */
+#profile-bar {
+  max-width: 600px;
+  margin: 0 auto 14px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.profile-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #fff;
+  color: #4a5568;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  padding: 5px 14px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  user-select: none;
+}
+
+.profile-tab:hover        { background: #edf2f7; border-color: #cbd5e0; }
+.profile-tab.active       { background: #667eea; color: #fff; border-color: #667eea; }
+.profile-tab.active:hover { background: #5a67d8; border-color: #5a67d8; }
+
+.profile-del {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0 0 2px;
+  transition: opacity 0.15s;
+}
+.profile-del:hover { opacity: 1; background: none; }
+
+.profile-add {
+  background: none;
+  color: #a0aec0;
+  border: 1px dashed #cbd5e0;
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.profile-add:hover { color: #667eea; border-color: #667eea; background: #ebf4ff; }
 
 /* ── Mobile ───────────────────────────────────── */
 @media (max-width: 480px) {
