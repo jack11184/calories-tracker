@@ -2,7 +2,7 @@
 
 A privacy-first, offline-capable calorie tracking web app. All your data is saved to a `.json` file **on your own computer** — nothing is ever uploaded to a server.
 
-Live site: [[jackdixon.github.io/calories-tracker](https://jack11184.github.io/calories-tracker)] <!-- update URL if needed -->
+Live site: [[jack11184.github.io/calories-tracker](https://jack11184.github.io/calories-tracker)] <!-- update URL if needed -->
 
 ---
 
