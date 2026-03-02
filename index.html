@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Calorie Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header>
+    <h1>My Calorie Tracker</h1>
+    <p id="current-date"></p>
+  </header>
+
+  <!-- Section 1: Goal & Progress -->
+  <section id="goal-section" class="card">
+    <h2>Daily Calorie Goal</h2>
+    <div class="goal-input-row">
+      <input id="goal-input" type="number" min="1" placeholder="e.g. 2000">
+      <span>kcal</span>
+      <button id="set-goal-btn">Set Goal</button>
+    </div>
+    <div id="progress-bar-container">
+      <div id="progress-bar-fill"></div>
+    </div>
+    <p id="progress-label">0 / 2000 kcal</p>
+  </section>
+
+  <!-- Section 2: Food Search & Add -->
+  <section id="search-section" class="card">
+    <h2>Add Food</h2>
+
+    <div class="search-row">
+      <input id="search-input" type="text" placeholder="Search food (e.g. apple, rice...)">
+      <button id="search-btn">Search</button>
+    </div>
+    <ul id="search-results"></ul>
+
+    <div class="divider">— or add manually —</div>
+
+    <div class="manual-row">
+      <input id="manual-name" type="text" placeholder="Food name">
+      <input id="manual-calories" type="number" min="1" placeholder="kcal">
+      <button id="add-manual-btn">Add</button>
+    </div>
+    <p id="manual-error" class="error-msg"></p>
+  </section>
+
+  <!-- Section 3: Today's Log -->
+  <section id="log-section" class="card">
+    <h2>Today's Log</h2>
+    <table id="log-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Food</th>
+          <th>kcal</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="log-body"></tbody>
+    </table>
+    <p id="daily-total" class="total-label">Total: 0 kcal</p>
+  </section>
+
+  <!-- Section 4: History & Chart -->
+  <section id="history-section" class="card">
+    <h2>History (Last 7 Days)</h2>
+    <canvas id="history-chart"></canvas>
+    <ul id="history-list"></ul>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
