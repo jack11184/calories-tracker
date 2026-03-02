@@ -61,48 +61,54 @@ async function searchFood() {
   resultsList.innerHTML = '<li style="color:#a0aec0;font-style:italic">Searching…</li>';
 
   const params = new URLSearchParams({
-    search_terms: query,
-    search_simple: 1,
-    action: 'process',
-    json: 1,
-    page_size: 10,
-    fields: 'product_name,nutriments,brands',
+    query,
+    dataType: 'SR Legacy,Survey (FNDDS),Branded',
+    pageSize: 10,
+    api_key: 'DEMO_KEY',
   });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
 
   try {
     const res = await fetch(
-      `https://world.openfoodfacts.org/cgi/search.pl?${params}`
+      `https://api.nal.usda.gov/fdc/v1/foods/search?${params}`,
+      { signal: controller.signal }
     );
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
-    displaySearchResults(json.products || []);
-  } catch {
-    resultsList.innerHTML =
-      '<li style="color:#fc8181">Search failed — check your connection.</li>';
+    displaySearchResults(json.foods || []);
+  } catch (err) {
+    clearTimeout(timeout);
+    console.error('Food search error:', err);
+    const msg = err.name === 'AbortError'
+      ? 'Search timed out — try again.'
+      : 'Search failed — check your connection.';
+    resultsList.innerHTML = `<li style="color:#fc8181">${msg}</li>`;
   }
 }
 
-function displaySearchResults(products) {
+function displaySearchResults(foods) {
   const list = document.getElementById('search-results');
   list.innerHTML = '';
 
-  // Filter out products without a name or calorie data
-  const valid = products.filter(p => {
-    const name = p.product_name?.trim();
-    const kcal = p.nutriments?.['energy-kcal_100g'] ?? p.nutriments?.['energy-kcal'];
-    return name && kcal != null && kcal > 0;
-  });
+  // USDA foods: description, brandOwner, foodNutrients[{nutrientName, unitName, value}]
+  function getKcal(f) {
+    return f.foodNutrients?.find(n => n.nutrientName === 'Energy' && n.unitName?.toLowerCase() === 'kcal');
+  }
+
+  const valid = foods.filter(f => f.description?.trim() && getKcal(f)?.value > 0);
 
   if (!valid.length) {
     list.innerHTML = '<li style="color:#a0aec0;font-style:italic">No results found.</li>';
     return;
   }
 
-  valid.forEach(product => {
-    const name = product.product_name.trim();
-    const brand = product.brands?.split(',')[0]?.trim() || '';
-    const kcalPer100g = Math.round(
-      product.nutriments['energy-kcal_100g'] ?? product.nutriments['energy-kcal']
-    );
+  valid.forEach(food => {
+    const name = food.description.trim();
+    const brand = food.brandOwner?.trim() || food.brandName?.trim() || '';
+    const kcalPer100g = Math.round(getKcal(food).value);
 
     const li = document.createElement('li');
     li.innerHTML = `
@@ -350,6 +356,102 @@ function buildChart(labels, caloriesData, goalData) {
   });
 }
 
+// ── Cutting & Bulking Plans ───────────────────────────────────────────────────
+
+let selectedSex = 'male';
+
+function initPlanSection() {
+  document.querySelectorAll('#plan-section .seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#plan-section .seg-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedSex = btn.dataset.val;
+    });
+  });
+
+  document.getElementById('calc-plan-btn').addEventListener('click', calculatePlan);
+
+  // Restore saved stats and auto-calculate if available
+  const data = loadData();
+  if (data.planStats) {
+    const s = data.planStats;
+    if (s.sex) {
+      selectedSex = s.sex;
+      document.querySelectorAll('#plan-section .seg-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.val === s.sex);
+      });
+    }
+    if (s.age)      document.getElementById('plan-age').value = s.age;
+    if (s.ft)       document.getElementById('plan-height-ft').value = s.ft;
+    if (s.inches != null) document.getElementById('plan-height-in').value = s.inches;
+    if (s.lbs)      document.getElementById('plan-weight').value = s.lbs;
+    if (s.activity) document.getElementById('plan-activity').value = s.activity;
+    calculatePlan();
+  }
+}
+
+function calculatePlan() {
+  const age      = parseInt(document.getElementById('plan-age').value, 10);
+  const ft       = parseInt(document.getElementById('plan-height-ft').value, 10);
+  const inches   = parseInt(document.getElementById('plan-height-in').value, 10) || 0;
+  const lbs      = parseFloat(document.getElementById('plan-weight').value);
+  const activity = parseFloat(document.getElementById('plan-activity').value);
+  const errEl    = document.getElementById('plan-error');
+
+  if (!age || age < 10 || age > 120)     { errEl.textContent = 'Enter a valid age (10–120).'; return; }
+  if (!ft || ft < 1 || inches < 0 || inches > 11) { errEl.textContent = 'Enter a valid height (e.g. 5 ft 10 in).'; return; }
+  if (!lbs || lbs < 1)                   { errEl.textContent = 'Enter a valid weight in lbs.'; return; }
+  errEl.textContent = '';
+
+  // Convert to metric for Mifflin-St Jeor
+  const heightCm = (ft * 12 + inches) * 2.54;
+  const weightKg = lbs * 0.453592;
+
+  const bmr = selectedSex === 'male'
+    ? 10 * weightKg + 6.25 * heightCm - 5 * age + 5
+    : 10 * weightKg + 6.25 * heightCm - 5 * age - 161;
+  const tdee     = Math.round(bmr * activity);
+  const cutKcal  = Math.max(tdee - 500, 1200); // floor at 1200 kcal
+  const bulkKcal = tdee + 300;
+
+  // Persist stats
+  const data = loadData();
+  data.planStats = { sex: selectedSex, age, ft, inches, lbs, activity };
+  saveData(data);
+
+  // Update results
+  document.getElementById('tdee-value').textContent = tdee.toLocaleString();
+
+  document.getElementById('cut-kcal').textContent    = `${cutKcal.toLocaleString()} kcal/day`;
+  const cutNote = cutKcal === 1200 ? '1,200 kcal minimum — consult a doctor' : '−500 kcal deficit · ~0.5 kg/week loss';
+  document.getElementById('cut-detail').textContent  = cutNote;
+
+  document.getElementById('bulk-kcal').textContent   = `${bulkKcal.toLocaleString()} kcal/day`;
+  document.getElementById('bulk-detail').textContent = '+300 kcal surplus · ~0.3 kg/week gain';
+
+  document.getElementById('cut-apply-btn').onclick  = () => applyPlanGoal(cutKcal,  'cut');
+  document.getElementById('bulk-apply-btn').onclick = () => applyPlanGoal(bulkKcal, 'bulk');
+
+  document.getElementById('plan-results').classList.remove('hidden');
+}
+
+function applyPlanGoal(calories, type) {
+  const data = loadData();
+  data.goal = calories;
+  saveData(data);
+  renderProgress();
+
+  const btn = document.getElementById(type + '-apply-btn');
+  btn.textContent = 'Goal Applied!';
+  btn.disabled = true;
+  setTimeout(() => {
+    btn.textContent = 'Apply Goal';
+    btn.disabled = false;
+  }, 1500);
+
+  document.getElementById('goal-section').scrollIntoView({ behavior: 'smooth' });
+}
+
 // ── Utility ───────────────────────────────────────────────────────────────────
 
 function escapeHtml(str) {
@@ -384,6 +486,8 @@ function init() {
   document.getElementById('manual-calories').addEventListener('keydown', e => {
     if (e.key === 'Enter') addManualEntry();
   });
+
+  initPlanSection();
 
   // Initial render
   renderLog();
