@@ -37,6 +37,7 @@ async function loadHandleFromIDB() {
 
 const BLANK_DB = () => ({
   activeProfile: 'Me',
+  usdaApiKey: null,
   profiles: {
     Me: { goal: 2000, days: {}, planStats: null },
   },
@@ -384,9 +385,9 @@ function searchLocalDB(query) {
 
 // ── Online food search (USDA + Open Food Facts in parallel) ──────────────────
 
-async function fetchJSON(url, timeoutMs) {
+async function fetchDirect(url, ms) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), ms);
   try {
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timer);
@@ -398,17 +399,34 @@ async function fetchJSON(url, timeoutMs) {
   }
 }
 
+async function fetchJSON(url, timeoutMs) {
+  try {
+    return await fetchDirect(url, timeoutMs);
+  } catch (err) {
+    // Rate limited — proxy won't help, the API itself is rejecting us
+    if (err.message === 'HTTP 429') throw err;
+    // Otherwise retry through CORS proxy (fixes file:// origin issues)
+    console.warn(`Direct fetch failed (${err.message}) — retrying via proxy`);
+    return await fetchDirect(`https://corsproxy.io/?${encodeURIComponent(url)}`, 9000);
+  }
+}
+
 async function searchUSDA(query) {
   const params = new URLSearchParams({
-    query, dataType: 'SR Legacy,Survey (FNDDS),Branded', pageSize: 10, api_key: 'DEMO_KEY',
+    query, dataType: 'SR Legacy,Survey (FNDDS),Branded', pageSize: 10, api_key: dbData.usdaApiKey || 'DEMO_KEY',
   });
-  const json = await fetchJSON(`https://api.nal.usda.gov/fdc/v1/foods/search?${params}`, 7000);
-  return (json.foods || [])
-    .map(f => {
-      const n = f.foodNutrients?.find(n => n.nutrientName === 'Energy' && n.unitName?.toLowerCase() === 'kcal');
-      return n?.value > 0 ? { name: f.description?.trim(), brand: f.brandOwner?.trim() || f.brandName?.trim() || '', kcalPer100g: Math.round(n.value) } : null;
-    })
-    .filter(Boolean);
+  try {
+    const json = await fetchJSON(`https://api.nal.usda.gov/fdc/v1/foods/search?${params}`, 7000);
+    return (json.foods || [])
+      .map(f => {
+        const n = f.foodNutrients?.find(n => n.nutrientName === 'Energy' && n.unitName?.toLowerCase() === 'kcal');
+        return n?.value > 0 ? { name: f.description?.trim(), brand: f.brandOwner?.trim() || f.brandName?.trim() || '', kcalPer100g: Math.round(n.value) } : null;
+      })
+      .filter(Boolean);
+  } catch (err) {
+    console.error('USDA failed:', err.message);
+    throw err;
+  }
 }
 
 async function searchOpenFoodFacts(query) {
@@ -416,15 +434,20 @@ async function searchOpenFoodFacts(query) {
     action: 'process', search_terms: query, search_simple: 1, json: 1, page_size: 10,
     fields: 'product_name,brands,nutriments',
   });
-  const json = await fetchJSON(`https://world.openfoodfacts.org/cgi/search.pl?${params}`, 10000);
-  return (json.products || [])
-    .map(p => {
-      const kcal = p.nutriments?.['energy-kcal_100g'] ?? p.nutriments?.['energy-kcal'];
-      return kcal > 0 && p.product_name?.trim()
-        ? { name: p.product_name.trim(), brand: p.brands?.split(',')[0]?.trim() || '', kcalPer100g: Math.round(kcal) }
-        : null;
-    })
-    .filter(Boolean);
+  try {
+    const json = await fetchJSON(`https://world.openfoodfacts.org/cgi/search.pl?${params}`, 10000);
+    return (json.products || [])
+      .map(p => {
+        const kcal = p.nutriments?.['energy-kcal_100g'] ?? p.nutriments?.['energy-kcal'];
+        return kcal > 0 && p.product_name?.trim()
+          ? { name: p.product_name.trim(), brand: p.brands?.split(',')[0]?.trim() || '', kcalPer100g: Math.round(kcal) }
+          : null;
+      })
+      .filter(Boolean);
+  } catch (err) {
+    console.error('Open Food Facts failed:', err.message);
+    throw err;
+  }
 }
 
 let searchCount = 0;
@@ -761,6 +784,35 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ── API key settings ──────────────────────────────────────────────────────────
+
+function initApiKeySection() {
+  const toggle   = document.getElementById('api-key-toggle');
+  const form     = document.getElementById('api-key-form');
+  const input    = document.getElementById('api-key-input');
+  const saveBtn  = document.getElementById('api-key-save-btn');
+
+  function updateToggleLabel() {
+    toggle.textContent = dbData.usdaApiKey ? '⚙ USDA API Key ✓' : '⚙ USDA API Key';
+    toggle.style.color = dbData.usdaApiKey ? '#48bb78' : '';
+  }
+  updateToggleLabel();
+
+  toggle.addEventListener('click', () => {
+    const hidden = form.classList.toggle('hidden');
+    if (!hidden && dbData.usdaApiKey) input.value = dbData.usdaApiKey;
+  });
+
+  saveBtn.addEventListener('click', () => {
+    const key = input.value.trim();
+    dbData.usdaApiKey = key || null;
+    scheduleWrite();
+    updateToggleLabel();
+    form.classList.add('hidden');
+    input.value = '';
+  });
+}
+
 // ── App init (called after database file is loaded) ───────────────────────────
 
 function initApp() {
@@ -777,6 +829,7 @@ function initApp() {
   document.getElementById('manual-calories').addEventListener('keydown', e => { if (e.key === 'Enter') addManualEntry(); });
 
   initPlanSection();
+  initApiKeySection();
   renderProfileBar();
   renderAll();
 }

@@ -149,6 +149,50 @@ header p {
   color: #ed8936;
 }
 
+#api-key-wrap {
+  margin: 6px 0 2px;
+}
+
+.api-key-toggle {
+  background: none;
+  border: none;
+  color: #a0aec0;
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s;
+}
+.api-key-toggle:hover { color: #667eea; background: none; }
+
+#api-key-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+#api-key-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  padding: 6px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f7fafc;
+}
+
+#api-key-save-btn {
+  padding: 6px 14px;
+  font-size: 0.85rem;
+}
+
+.api-key-link {
+  font-size: 0.78rem;
+  color: #667eea;
+  white-space: nowrap;
+}
+
 .divider {
   text-align: center;
   color: #a0aec0;
