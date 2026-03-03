@@ -212,6 +212,11 @@ function saveData(profileData) {
   scheduleWrite();
 }
 
+function getSelectedDate() {
+  const input = document.getElementById('log-date-input');
+  return input?.value || getToday();
+}
+
 function getTodayEntries() {
   return loadData().days[getToday()] || [];
 }
@@ -1039,10 +1044,10 @@ function addFoodFromSearch(food) {
 function addEntry(name, calories, macros = {}) {
   const now  = new Date();
   const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  const data  = loadData();
-  const today = getToday();
-  if (!data.days[today]) data.days[today] = [];
-  data.days[today].push({
+  const data = loadData();
+  const date = getSelectedDate();
+  if (!data.days[date]) data.days[date] = [];
+  data.days[date].push({
     id: Date.now(), time, name, calories,
     protein: macros.protein ?? null,
     carbs:   macros.carbs   ?? null,
@@ -1443,6 +1448,12 @@ function initApp() {
     new Date().toLocaleDateString('en-US', {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     });
+
+  const logDateInput = document.getElementById('log-date-input');
+  logDateInput.value = getToday();
+  document.getElementById('log-date-today-btn').addEventListener('click', () => {
+    logDateInput.value = getToday();
+  });
 
   document.getElementById('set-goal-btn').addEventListener('click', setGoal);
   document.getElementById('goal-input').addEventListener('keydown', e => { if (e.key === 'Enter') setGoal(); });
