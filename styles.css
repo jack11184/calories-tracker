@@ -629,6 +629,201 @@ button:active { background: #4c51bf; }
 }
 .profile-add:hover { color: #667eea; border-color: #667eea; background: #ebf4ff; }
 
+/* ── Macro goals form ─────────────────────────── */
+.macro-goals-toggle {
+  background: none;
+  border: 1px solid #cbd5e0;
+  color: #718096;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .2s, color .2s;
+}
+.macro-goals-toggle:hover { border-color: #667eea; color: #667eea; }
+
+#macro-goals-form {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #f7fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+.macro-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.macro-input-row label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5568;
+}
+.macro-input-row input {
+  width: 72px;
+  padding: 5px 8px;
+  font-size: 13px;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  background: #fff;
+}
+.macro-input-row .unit-label { font-size: 12px; color: #a0aec0; margin-right: 4px; }
+#macro-save-btn { padding: 5px 14px; font-size: 13px; }
+
+/* ── Macro progress bars ──────────────────────── */
+#macro-bars { margin-top: 14px; }
+
+.macro-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.macro-bar-label {
+  width: 52px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.protein-label { color: #4299e1; }
+.carbs-label   { color: #ed8936; }
+.fat-label     { color: #e53e3e; }
+
+.macro-bar-track {
+  flex: 1;
+  height: 7px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.macro-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width .3s ease;
+  width: 0%;
+}
+.protein-bar { background: #4299e1; }
+.carbs-bar   { background: #ed8936; }
+.fat-bar     { background: #e53e3e; }
+.macro-bar-fill.over  { filter: brightness(0.8); }
+.macro-bar-fill.near  { filter: brightness(1.1); }
+
+.macro-bar-value {
+  width: 80px;
+  text-align: right;
+  font-size: 12px;
+  color: #718096;
+}
+
+/* ── Result actions (star + add) ──────────────── */
+.result-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.result-macros { color: #805ad5; font-size: 11px; }
+
+.fav-btn {
+  background: none;
+  border: none;
+  color: #d69e2e;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  transition: transform .15s;
+}
+.fav-btn:hover { transform: scale(1.2); }
+
+/* ── Recent & Favorites panel ─────────────────── */
+#quick-foods {
+  margin-top: 10px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+}
+.quick-section { margin-bottom: 6px; }
+
+.quick-toggle {
+  background: none;
+  border: none;
+  color: #718096;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.quick-toggle:hover { color: #2d3748; }
+.toggle-arrow { font-size: 10px; }
+
+.quick-list {
+  list-style: none;
+  margin: 6px 0 4px 0;
+  padding: 0;
+}
+.quick-food-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid #edf2f7;
+}
+.quick-food-item:last-child { border-bottom: none; }
+
+.quick-info { flex: 1; min-width: 0; }
+.quick-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quick-meta { font-size: 11px; color: #a0aec0; }
+
+.quick-add-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.quick-empty {
+  color: #a0aec0;
+  font-style: italic;
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+/* ── Manual entry macros ──────────────────────── */
+.manual-macro-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.manual-macro-hint {
+  font-size: 12px;
+  color: #a0aec0;
+}
+.manual-macro-row input {
+  width: 100px;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+/* ── Entry macro sub-line ─────────────────────── */
+.entry-macros {
+  font-size: 11px;
+  color: #a0aec0;
+  margin-top: 2px;
+}
+
 /* ── Mobile ───────────────────────────────────── */
 @media (max-width: 480px) {
   .goal-input-row { flex-direction: column; align-items: stretch; }
@@ -639,4 +834,7 @@ button:active { background: #4c51bf; }
   .plan-row   { flex-direction: column; align-items: stretch; }
   .plan-label { min-width: unset; }
   .plan-cards { grid-template-columns: 1fr; }
+  .macro-input-row { gap: 6px; }
+  .macro-input-row input { width: 60px; }
+  .manual-macro-row input { width: 85px; }
 }

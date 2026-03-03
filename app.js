@@ -39,7 +39,7 @@ const BLANK_DB = () => ({
   activeProfile: 'Me',
   usdaApiKey: null,
   profiles: {
-    Me: { goal: 2000, days: {}, planStats: null },
+    Me: { goal: 2000, macroGoals: { protein: null, carbs: null, fat: null }, days: {}, planStats: null, recentFoods: [], favoriteFoods: [] },
   },
 });
 
@@ -194,7 +194,12 @@ function getToday() {
 }
 
 function loadData() {
-  return dbData.profiles[getActiveProfile()] || { goal: 2000, days: {} };
+  const p = dbData.profiles[getActiveProfile()] || { goal: 2000, days: {} };
+  // Migrate older profiles that predate macro/recent/favorites fields
+  if (!p.macroGoals)    p.macroGoals    = { protein: null, carbs: null, fat: null };
+  if (!p.recentFoods)   p.recentFoods   = [];
+  if (!p.favoriteFoods) p.favoriteFoods = [];
+  return p;
 }
 
 function saveData(profileData) {
@@ -253,7 +258,7 @@ function addProfile() {
   const name = window.prompt('Name for new profile:')?.trim();
   if (!name) return;
   if (dbData.profiles[name]) { alert(`"${name}" already exists.`); return; }
-  dbData.profiles[name] = { goal: 2000, days: {}, planStats: null };
+  dbData.profiles[name] = { goal: 2000, macroGoals: { protein: null, carbs: null, fat: null }, days: {}, planStats: null, recentFoods: [], favoriteFoods: [] };
   switchProfile(name);
 }
 
@@ -299,6 +304,61 @@ function renderProgress() {
 
   const goalInput = document.getElementById('goal-input');
   if (!goalInput.matches(':focus')) goalInput.value = goal;
+
+  // Macro progress bars
+  const mg = data.macroGoals || {};
+  const macroTotals = {
+    protein: Math.round(entries.reduce((s, e) => s + (e.protein || 0), 0) * 10) / 10,
+    carbs:   Math.round(entries.reduce((s, e) => s + (e.carbs   || 0), 0) * 10) / 10,
+    fat:     Math.round(entries.reduce((s, e) => s + (e.fat     || 0), 0) * 10) / 10,
+  };
+  ['protein', 'carbs', 'fat'].forEach(macro => {
+    const barEl   = document.getElementById(`${macro}-bar-fill`);
+    const labelEl = document.getElementById(`${macro}-label`);
+    if (!barEl) return;
+    const goalVal  = mg[macro];
+    const totalVal = macroTotals[macro];
+    barEl.className = `macro-bar-fill ${macro}-bar`;
+    if (goalVal) {
+      const p = Math.min((totalVal / goalVal) * 100, 100);
+      barEl.style.width = p + '%';
+      if (p >= 100) barEl.classList.add('over');
+      else if (p >= 85) barEl.classList.add('near');
+      labelEl.textContent = `${totalVal}g / ${goalVal}g`;
+    } else {
+      barEl.style.width = '0%';
+      labelEl.textContent = `${totalVal}g`;
+    }
+  });
+}
+
+function initMacroGoals() {
+  const toggle  = document.getElementById('macro-goals-toggle');
+  const form    = document.getElementById('macro-goals-form');
+  const saveBtn = document.getElementById('macro-save-btn');
+
+  toggle.addEventListener('click', () => {
+    const hidden = form.classList.toggle('hidden');
+    toggle.textContent = hidden ? 'Set Macros' : 'Hide Macros';
+    if (!hidden) {
+      const mg = loadData().macroGoals || {};
+      document.getElementById('macro-protein-input').value = mg.protein ?? '';
+      document.getElementById('macro-carbs-input').value   = mg.carbs   ?? '';
+      document.getElementById('macro-fat-input').value     = mg.fat     ?? '';
+    }
+  });
+
+  saveBtn.addEventListener('click', () => {
+    const data = loadData();
+    const p = parseFloat(document.getElementById('macro-protein-input').value);
+    const c = parseFloat(document.getElementById('macro-carbs-input').value);
+    const f = parseFloat(document.getElementById('macro-fat-input').value);
+    data.macroGoals = { protein: isNaN(p) ? null : p, carbs: isNaN(c) ? null : c, fat: isNaN(f) ? null : f };
+    saveData(data);
+    renderProgress();
+    form.classList.add('hidden');
+    toggle.textContent = 'Set Macros';
+  });
 }
 
 // ── Local food database (always-available fallback) ───────────────────────────
@@ -821,8 +881,21 @@ async function searchUSDA(query) {
     const json = await fetchJSON(`https://api.nal.usda.gov/fdc/v1/foods/search?${params}`, 7000);
     return (json.foods || [])
       .map(f => {
-        const n = f.foodNutrients?.find(n => n.nutrientName === 'Energy' && n.unitName?.toLowerCase() === 'kcal');
-        return n?.value > 0 ? { name: f.description?.trim(), brand: f.brandOwner?.trim() || f.brandName?.trim() || '', kcalPer100g: Math.round(n.value) } : null;
+        const ns      = f.foodNutrients || [];
+        const kcalN   = ns.find(n => n.nutrientName === 'Energy' && n.unitName?.toLowerCase() === 'kcal');
+        if (!(kcalN?.value > 0)) return null;
+        const proteinN = ns.find(n => n.nutrientName === 'Protein');
+        const carbsN   = ns.find(n => n.nutrientName === 'Carbohydrate, by difference');
+        const fatN     = ns.find(n => n.nutrientName === 'Total lipid (fat)');
+        const round1 = v => v != null ? Math.round(v * 10) / 10 : null;
+        return {
+          name:        f.description?.trim(),
+          brand:       f.brandOwner?.trim() || f.brandName?.trim() || '',
+          kcalPer100g: Math.round(kcalN.value),
+          protein:     round1(proteinN?.value),
+          carbs:       round1(carbsN?.value),
+          fat:         round1(fatN?.value),
+        };
       })
       .filter(Boolean);
   } catch (err) {
@@ -841,9 +914,16 @@ async function searchOpenFoodFacts(query) {
     return (json.products || [])
       .map(p => {
         const kcal = p.nutriments?.['energy-kcal_100g'] ?? p.nutriments?.['energy-kcal'];
-        return kcal > 0 && p.product_name?.trim()
-          ? { name: p.product_name.trim(), brand: p.brands?.split(',')[0]?.trim() || '', kcalPer100g: Math.round(kcal) }
-          : null;
+        if (!(kcal > 0) || !p.product_name?.trim()) return null;
+        const round1 = v => v != null ? Math.round(v * 10) / 10 : null;
+        return {
+          name:        p.product_name.trim(),
+          brand:       p.brands?.split(',')[0]?.trim() || '',
+          kcalPer100g: Math.round(kcal),
+          protein:     round1(p.nutriments?.['proteins_100g']),
+          carbs:       round1(p.nutriments?.['carbohydrates_100g']),
+          fat:         round1(p.nutriments?.['fat_100g']),
+        };
       })
       .filter(Boolean);
   } catch (err) {
@@ -895,41 +975,67 @@ function displaySearchResults(results) {
     return;
   }
 
-  results.forEach(({ name, brand, kcalPer100g }) => {
+  const favs = loadData().favoriteFoods;
+  results.forEach(food => {
+    const { name, brand, kcalPer100g, protein, carbs, fat } = food;
+    const isFav     = favs.some(f => f.name === name);
+    const hasMacros = protein != null || carbs != null || fat != null;
+    const macroStr  = hasMacros
+      ? ` · <span class="result-macros">P ${protein ?? '--'}g · C ${carbs ?? '--'}g · F ${fat ?? '--'}g</span>`
+      : '';
+
     const li = document.createElement('li');
     li.innerHTML = `
       <div class="result-info">
         <div class="result-name">${escapeHtml(name)}</div>
-        <div class="result-meta">${escapeHtml(brand)} · ${kcalPer100g} kcal / 100g</div>
+        <div class="result-meta">${escapeHtml(brand)} · ${kcalPer100g} kcal/100g${macroStr}</div>
       </div>
-      <button class="add-result-btn">Add</button>
+      <div class="result-actions">
+        <button class="fav-btn" title="${isFav ? 'Unfavorite' : 'Favorite'}">${isFav ? '★' : '☆'}</button>
+        <button class="add-result-btn">Add</button>
+      </div>
     `;
-    li.querySelector('button').addEventListener('click', () => addFoodFromSearch(name, kcalPer100g));
+    li.querySelector('.add-result-btn').addEventListener('click', () => addFoodFromSearch(food));
+    li.querySelector('.fav-btn').addEventListener('click', () => {
+      toggleFavorite(food);
+      displaySearchResults(results);
+    });
     list.appendChild(li);
   });
 }
 
-function addFoodFromSearch(name, kcalPer100g) {
+function addFoodFromSearch(food) {
+  const { name, kcalPer100g, protein, carbs, fat } = food;
   const gramsStr = window.prompt(
     `How many grams of "${name}" did you eat?\n(${kcalPer100g} kcal per 100g)`
   );
   if (gramsStr === null) return;
   const grams = parseFloat(gramsStr);
   if (!grams || grams <= 0) { alert('Please enter a valid number of grams.'); return; }
-  addEntry(`${name} (${grams}g)`, Math.round((grams / 100) * kcalPer100g));
+  const scale = v => v != null ? Math.round((grams / 100) * v * 10) / 10 : null;
+  addEntry(`${name} (${grams}g)`, Math.round((grams / 100) * kcalPer100g), {
+    protein: scale(protein), carbs: scale(carbs), fat: scale(fat),
+  });
+  trackRecentFood(food);
   document.getElementById('search-results').innerHTML = '';
   document.getElementById('search-input').value = '';
+  renderRecentFavorites();
 }
 
 // ── Log management ────────────────────────────────────────────────────────────
 
-function addEntry(name, calories) {
+function addEntry(name, calories, macros = {}) {
   const now  = new Date();
   const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
   const data  = loadData();
   const today = getToday();
   if (!data.days[today]) data.days[today] = [];
-  data.days[today].push({ id: Date.now(), time, name, calories });
+  data.days[today].push({
+    id: Date.now(), time, name, calories,
+    protein: macros.protein ?? null,
+    carbs:   macros.carbs   ?? null,
+    fat:     macros.fat     ?? null,
+  });
   saveData(data);
   renderLog(); renderProgress(); renderHistory(); renderChart();
 }
@@ -946,9 +1052,20 @@ function addManualEntry() {
   if (!name)                    { errEl.textContent = 'Please enter a food name.'; return; }
   if (!calories || calories < 1) { errEl.textContent = 'Please enter a valid calorie amount.'; return; }
 
-  addEntry(name, calories);
+  const pVal = parseFloat(document.getElementById('manual-protein').value);
+  const cVal = parseFloat(document.getElementById('manual-carbs').value);
+  const fVal = parseFloat(document.getElementById('manual-fat').value);
+
+  addEntry(name, calories, {
+    protein: isNaN(pVal) ? null : pVal,
+    carbs:   isNaN(cVal) ? null : cVal,
+    fat:     isNaN(fVal) ? null : fVal,
+  });
   nameInput.value = '';
   calInput.value  = '';
+  document.getElementById('manual-protein').value = '';
+  document.getElementById('manual-carbs').value   = '';
+  document.getElementById('manual-fat').value     = '';
 }
 
 function deleteEntry(id) {
@@ -974,10 +1091,14 @@ function renderLog() {
   }
 
   entries.forEach(entry => {
+    const hasMacros  = entry.protein != null || entry.carbs != null || entry.fat != null;
+    const macroLine  = hasMacros
+      ? `<div class="entry-macros">P: ${entry.protein ?? '--'}g · C: ${entry.carbs ?? '--'}g · F: ${entry.fat ?? '--'}g</div>`
+      : '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td class="col-time">${escapeHtml(entry.time)}</td>
-      <td>${escapeHtml(entry.name)}</td>
+      <td><div>${escapeHtml(entry.name)}</div>${macroLine}</td>
       <td class="col-kcal">${entry.calories.toLocaleString()}</td>
       <td class="col-del"><button class="delete-btn" title="Remove">×</button></td>
     `;
@@ -1166,6 +1287,70 @@ function applyPlanGoal(calories, type) {
   document.getElementById('goal-section').scrollIntoView({ behavior: 'smooth' });
 }
 
+// ── Recent foods & Favorites ──────────────────────────────────────────────────
+
+function trackRecentFood(food) {
+  const data = loadData();
+  data.recentFoods = data.recentFoods.filter(f => f.name !== food.name);
+  data.recentFoods.unshift({ name: food.name, brand: food.brand || '', kcalPer100g: food.kcalPer100g, protein: food.protein ?? null, carbs: food.carbs ?? null, fat: food.fat ?? null });
+  data.recentFoods = data.recentFoods.slice(0, 10);
+  saveData(data);
+}
+
+function toggleFavorite(food) {
+  const data = loadData();
+  const idx  = data.favoriteFoods.findIndex(f => f.name === food.name);
+  if (idx >= 0) {
+    data.favoriteFoods.splice(idx, 1);
+  } else {
+    data.favoriteFoods.push({ name: food.name, brand: food.brand || '', kcalPer100g: food.kcalPer100g, protein: food.protein ?? null, carbs: food.carbs ?? null, fat: food.fat ?? null });
+  }
+  saveData(data);
+}
+
+function renderQuickList(container, foods, emptyMsg) {
+  container.innerHTML = '';
+  if (!foods.length) {
+    container.innerHTML = `<li class="quick-empty">${emptyMsg}</li>`;
+    return;
+  }
+  const favs = loadData().favoriteFoods;
+  foods.forEach(food => {
+    const isFav = favs.some(f => f.name === food.name);
+    const li = document.createElement('li');
+    li.className = 'quick-food-item';
+    li.innerHTML = `
+      <div class="quick-info">
+        <span class="quick-name">${escapeHtml(food.name)}</span>
+        <span class="quick-meta">${food.kcalPer100g} kcal/100g</span>
+      </div>
+      <button class="fav-btn" title="${isFav ? 'Unfavorite' : 'Favorite'}">${isFav ? '★' : '☆'}</button>
+      <button class="quick-add-btn">Add</button>
+    `;
+    li.querySelector('.quick-add-btn').addEventListener('click', () => addFoodFromSearch(food));
+    li.querySelector('.fav-btn').addEventListener('click', () => { toggleFavorite(food); renderRecentFavorites(); });
+    container.appendChild(li);
+  });
+}
+
+function renderRecentFavorites() {
+  const data = loadData();
+  renderQuickList(document.getElementById('recent-list'),  data.recentFoods,   'No recent foods yet — start logging!');
+  renderQuickList(document.getElementById('fav-list'),     data.favoriteFoods, 'No favorites yet — star a food from search results.');
+}
+
+function initQuickFoods() {
+  ['recent', 'fav'].forEach(key => {
+    const btn  = document.getElementById(`${key}-toggle`);
+    const list = document.getElementById(`${key}-list`);
+    btn.addEventListener('click', () => {
+      const hidden = list.classList.toggle('hidden');
+      btn.querySelector('.toggle-arrow').textContent = hidden ? '▶' : '▼';
+    });
+  });
+  renderRecentFavorites();
+}
+
 // ── Render all (used when switching profiles) ─────────────────────────────────
 
 function renderAll() {
@@ -1174,6 +1359,7 @@ function renderAll() {
   renderProgress();
   renderHistory();
   renderChart();
+  renderRecentFavorites();
   document.getElementById('search-results').innerHTML = '';
   document.getElementById('search-input').value = '';
 }
@@ -1232,6 +1418,8 @@ function initApp() {
 
   initPlanSection();
   initApiKeySection();
+  initMacroGoals();
+  initQuickFoods();
   renderProfileBar();
   renderAll();
 }

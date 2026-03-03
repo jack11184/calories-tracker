@@ -119,11 +119,43 @@
         <input id="goal-input" type="number" min="1" placeholder="e.g. 2000">
         <span>kcal</span>
         <button id="set-goal-btn">Set Goal</button>
+        <button id="macro-goals-toggle" class="macro-goals-toggle">Set Macros</button>
+      </div>
+      <div id="macro-goals-form" class="hidden">
+        <div class="macro-input-row">
+          <label>Protein</label>
+          <input id="macro-protein-input" type="number" min="0" placeholder="150">
+          <span class="unit-label">g</span>
+          <label>Carbs</label>
+          <input id="macro-carbs-input" type="number" min="0" placeholder="200">
+          <span class="unit-label">g</span>
+          <label>Fat</label>
+          <input id="macro-fat-input" type="number" min="0" placeholder="65">
+          <span class="unit-label">g</span>
+          <button id="macro-save-btn">Save</button>
+        </div>
       </div>
       <div id="progress-bar-container">
         <div id="progress-bar-fill"></div>
       </div>
       <p id="progress-label">0 / 2000 kcal</p>
+      <div id="macro-bars">
+        <div class="macro-bar-row">
+          <span class="macro-bar-label protein-label">Protein</span>
+          <div class="macro-bar-track"><div id="protein-bar-fill" class="macro-bar-fill protein-bar"></div></div>
+          <span id="protein-label" class="macro-bar-value">0g</span>
+        </div>
+        <div class="macro-bar-row">
+          <span class="macro-bar-label carbs-label">Carbs</span>
+          <div class="macro-bar-track"><div id="carbs-bar-fill" class="macro-bar-fill carbs-bar"></div></div>
+          <span id="carbs-label" class="macro-bar-value">0g</span>
+        </div>
+        <div class="macro-bar-row">
+          <span class="macro-bar-label fat-label">Fat</span>
+          <div class="macro-bar-track"><div id="fat-bar-fill" class="macro-bar-fill fat-bar"></div></div>
+          <span id="fat-label" class="macro-bar-value">0g</span>
+        </div>
+      </div>
     </section>
 
     <!-- Section 3: Food Search & Add -->
@@ -136,6 +168,17 @@
       </div>
       <ul id="search-results"></ul>
       <p id="search-status"></p>
+
+      <div id="quick-foods">
+        <div class="quick-section">
+          <button class="quick-toggle" id="recent-toggle"><span class="toggle-arrow">▶</span> Recent</button>
+          <ul id="recent-list" class="quick-list hidden"></ul>
+        </div>
+        <div class="quick-section">
+          <button class="quick-toggle" id="fav-toggle"><span class="toggle-arrow">▶</span> Favorites</button>
+          <ul id="fav-list" class="quick-list hidden"></ul>
+        </div>
+      </div>
 
       <div id="api-key-wrap">
         <button id="api-key-toggle" class="api-key-toggle">⚙ USDA API Key</button>
@@ -152,6 +195,12 @@
         <input id="manual-name" type="text" placeholder="Food name">
         <input id="manual-calories" type="number" min="1" placeholder="kcal">
         <button id="add-manual-btn">Add</button>
+      </div>
+      <div class="manual-macro-row">
+        <span class="manual-macro-hint">Optional macros:</span>
+        <input id="manual-protein" type="number" min="0" placeholder="Protein g">
+        <input id="manual-carbs"   type="number" min="0" placeholder="Carbs g">
+        <input id="manual-fat"     type="number" min="0" placeholder="Fat g">
       </div>
       <p id="manual-error" class="error-msg"></p>
     </section>
