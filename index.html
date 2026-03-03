@@ -35,199 +35,245 @@
   <!-- Main app (hidden until database is loaded) -->
   <div id="app" class="hidden">
 
-    <div id="profile-bar"></div>
+    <!-- Sticky top bar: profiles + title + tab nav -->
+    <div id="top-bar">
+      <div id="top-bar-inner">
+        <div id="profile-bar"></div>
+        <div id="app-bar">
+          <span class="app-name">🥗 Calorie Tracker</span>
+          <span id="current-date"></span>
+        </div>
+        <nav id="tab-bar">
+          <button class="tab-btn active" data-tab="overview">Overview</button>
+          <button class="tab-btn" data-tab="add-food">Add Food</button>
+          <button class="tab-btn" data-tab="goals">Goals</button>
+        </nav>
+      </div>
+    </div>
 
-    <header>
-      <h1>My Calorie Tracker</h1>
-      <p id="current-date"></p>
-    </header>
+    <!-- Tab content -->
+    <div id="tab-content">
 
-    <!-- Section 1: Cutting & Bulking Plans -->
-    <section id="plan-section" class="card">
-      <h2>Cutting &amp; Bulking Plans</h2>
+      <!-- ── Tab 1: Overview ───────────────────────── -->
+      <div id="tab-overview" class="tab-pane">
 
-      <div class="plan-inputs">
-        <div class="plan-row">
-          <label class="plan-label">Sex</label>
-          <div class="seg-control">
-            <button class="seg-btn active" data-val="male">Male</button>
-            <button class="seg-btn" data-val="female">Female</button>
+        <!-- Calorie + macro summary -->
+        <section class="card" id="progress-card">
+          <div class="kcal-summary">
+            <div class="kcal-stat">
+              <span class="kcal-num" id="kcal-consumed">0</span>
+              <span class="kcal-desc">consumed</span>
+            </div>
+            <div class="kcal-divider"></div>
+            <div class="kcal-stat" id="kcal-remaining-stat">
+              <span class="kcal-num" id="kcal-remaining">—</span>
+              <span class="kcal-desc" id="kcal-remaining-label">remaining</span>
+            </div>
           </div>
-        </div>
-        <div class="plan-row">
-          <label class="plan-label" for="plan-age">Age</label>
-          <div class="plan-input-unit">
-            <input id="plan-age" type="number" min="10" max="120" placeholder="25">
-            <span class="unit-label">yr</span>
+          <div id="progress-bar-container">
+            <div id="progress-bar-fill"></div>
           </div>
-        </div>
-        <div class="plan-row">
-          <label class="plan-label">Height</label>
-          <div class="plan-input-unit">
-            <input id="plan-height-ft" type="number" min="1" max="8" placeholder="5">
-            <span class="unit-label">ft</span>
-            <input id="plan-height-in" type="number" min="0" max="11" placeholder="10">
-            <span class="unit-label">in</span>
+          <p id="progress-label">0 / 2000 kcal</p>
+          <div id="macro-bars">
+            <div class="macro-bar-row">
+              <span class="macro-bar-label protein-label">Protein</span>
+              <div class="macro-bar-track"><div id="protein-bar-fill" class="macro-bar-fill protein-bar"></div></div>
+              <span id="protein-label" class="macro-bar-value">0g</span>
+            </div>
+            <div class="macro-bar-row">
+              <span class="macro-bar-label carbs-label">Carbs</span>
+              <div class="macro-bar-track"><div id="carbs-bar-fill" class="macro-bar-fill carbs-bar"></div></div>
+              <span id="carbs-label" class="macro-bar-value">0g</span>
+            </div>
+            <div class="macro-bar-row">
+              <span class="macro-bar-label fat-label">Fat</span>
+              <div class="macro-bar-track"><div id="fat-bar-fill" class="macro-bar-fill fat-bar"></div></div>
+              <span id="fat-label" class="macro-bar-value">0g</span>
+            </div>
           </div>
-        </div>
-        <div class="plan-row">
-          <label class="plan-label" for="plan-weight">Weight</label>
-          <div class="plan-input-unit">
-            <input id="plan-weight" type="number" min="1" step="0.1" placeholder="154">
-            <span class="unit-label">lbs</span>
+        </section>
+
+        <!-- Today's log -->
+        <section id="log-section" class="card">
+          <h2>Today's Log</h2>
+          <table id="log-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Food</th>
+                <th>kcal</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="log-body"></tbody>
+          </table>
+          <p id="daily-total" class="total-label">Total: 0 kcal</p>
+        </section>
+
+        <!-- History chart -->
+        <section id="history-section" class="card">
+          <h2>History (Last 7 Days)</h2>
+          <canvas id="history-chart"></canvas>
+          <ul id="history-list"></ul>
+        </section>
+
+      </div><!-- #tab-overview -->
+
+      <!-- ── Tab 2: Add Food ───────────────────────── -->
+      <div id="tab-add-food" class="tab-pane hidden">
+
+        <section id="search-section" class="card">
+          <h2>Search Food</h2>
+          <div class="search-row">
+            <input id="search-input" type="text" placeholder="Search food (e.g. apple, rice...)">
+            <button id="search-btn">Search</button>
           </div>
-        </div>
-        <div class="plan-row">
-          <label class="plan-label" for="plan-activity">Activity</label>
-          <select id="plan-activity">
-            <option value="1.2">Sedentary (desk job, no exercise)</option>
-            <option value="1.375">Lightly active (1–3×/week)</option>
-            <option value="1.55" selected>Moderately active (3–5×/week)</option>
-            <option value="1.725">Very active (6–7×/week)</option>
-            <option value="1.9">Extra active (physical job + exercise)</option>
-          </select>
-        </div>
-        <button id="calc-plan-btn">Calculate Plans</button>
-        <p id="plan-error" class="error-msg"></p>
-      </div>
+          <ul id="search-results"></ul>
+          <p id="search-status"></p>
 
-      <div id="plan-results" class="plan-results hidden">
-        <p class="tdee-info">Estimated daily burn: <strong id="tdee-value">—</strong> kcal</p>
-        <div class="plan-cards">
-          <div class="plan-card cut">
-            <div class="plan-card-title">Cutting</div>
-            <div class="plan-card-sub">Lose Fat</div>
-            <div class="plan-card-kcal" id="cut-kcal">—</div>
-            <div class="plan-card-detail" id="cut-detail">—</div>
-            <button class="plan-apply-btn" id="cut-apply-btn">Apply Goal</button>
+          <div id="quick-foods">
+            <div class="quick-section">
+              <button class="quick-toggle" id="recent-toggle"><span class="toggle-arrow">▶</span> Recent</button>
+              <ul id="recent-list" class="quick-list hidden"></ul>
+            </div>
+            <div class="quick-section">
+              <button class="quick-toggle" id="fav-toggle"><span class="toggle-arrow">▶</span> Favorites</button>
+              <ul id="fav-list" class="quick-list hidden"></ul>
+            </div>
           </div>
-          <div class="plan-card bulk">
-            <div class="plan-card-title">Bulking</div>
-            <div class="plan-card-sub">Build Muscle</div>
-            <div class="plan-card-kcal" id="bulk-kcal">—</div>
-            <div class="plan-card-detail" id="bulk-detail">—</div>
-            <button class="plan-apply-btn" id="bulk-apply-btn">Apply Goal</button>
+        </section>
+
+        <section class="card">
+          <h2>Add Manually</h2>
+          <div class="manual-row">
+            <input id="manual-name" type="text" placeholder="Food name">
+            <input id="manual-calories" type="number" min="1" placeholder="kcal">
+            <button id="add-manual-btn">Add</button>
           </div>
-        </div>
-      </div>
-    </section>
+          <div class="manual-macro-row">
+            <span class="manual-macro-hint">Optional macros:</span>
+            <input id="manual-protein" type="number" min="0" placeholder="Protein g">
+            <input id="manual-carbs"   type="number" min="0" placeholder="Carbs g">
+            <input id="manual-fat"     type="number" min="0" placeholder="Fat g">
+          </div>
+          <p id="manual-error" class="error-msg"></p>
 
-    <!-- Section 2: Goal & Progress -->
-    <section id="goal-section" class="card">
-      <h2>Daily Calorie Goal</h2>
-      <div class="goal-input-row">
-        <input id="goal-input" type="number" min="1" placeholder="e.g. 2000">
-        <span>kcal</span>
-        <button id="set-goal-btn">Set Goal</button>
-        <button id="macro-goals-toggle" class="macro-goals-toggle">Set Macros</button>
-      </div>
-      <div id="macro-goals-form" class="hidden">
-        <div class="macro-input-row">
-          <label>Protein</label>
-          <input id="macro-protein-input" type="number" min="0" placeholder="150">
-          <span class="unit-label">g</span>
-          <label>Carbs</label>
-          <input id="macro-carbs-input" type="number" min="0" placeholder="200">
-          <span class="unit-label">g</span>
-          <label>Fat</label>
-          <input id="macro-fat-input" type="number" min="0" placeholder="65">
-          <span class="unit-label">g</span>
-          <button id="macro-save-btn">Save</button>
-        </div>
-      </div>
-      <div id="progress-bar-container">
-        <div id="progress-bar-fill"></div>
-      </div>
-      <p id="progress-label">0 / 2000 kcal</p>
-      <div id="macro-bars">
-        <div class="macro-bar-row">
-          <span class="macro-bar-label protein-label">Protein</span>
-          <div class="macro-bar-track"><div id="protein-bar-fill" class="macro-bar-fill protein-bar"></div></div>
-          <span id="protein-label" class="macro-bar-value">0g</span>
-        </div>
-        <div class="macro-bar-row">
-          <span class="macro-bar-label carbs-label">Carbs</span>
-          <div class="macro-bar-track"><div id="carbs-bar-fill" class="macro-bar-fill carbs-bar"></div></div>
-          <span id="carbs-label" class="macro-bar-value">0g</span>
-        </div>
-        <div class="macro-bar-row">
-          <span class="macro-bar-label fat-label">Fat</span>
-          <div class="macro-bar-track"><div id="fat-bar-fill" class="macro-bar-fill fat-bar"></div></div>
-          <span id="fat-label" class="macro-bar-value">0g</span>
-        </div>
-      </div>
-    </section>
+          <div id="api-key-wrap">
+            <button id="api-key-toggle" class="api-key-toggle">⚙ USDA API Key</button>
+            <div id="api-key-form" class="hidden">
+              <input id="api-key-input" type="password" placeholder="Paste key from api.data.gov" autocomplete="off">
+              <button id="api-key-save-btn">Save</button>
+              <a href="https://api.data.gov/signup" target="_blank" class="api-key-link">Get free key →</a>
+            </div>
+          </div>
+        </section>
 
-    <!-- Section 3: Food Search & Add -->
-    <section id="search-section" class="card">
-      <h2>Add Food</h2>
+      </div><!-- #tab-add-food -->
 
-      <div class="search-row">
-        <input id="search-input" type="text" placeholder="Search food (e.g. apple, rice...)">
-        <button id="search-btn">Search</button>
-      </div>
-      <ul id="search-results"></ul>
-      <p id="search-status"></p>
+      <!-- ── Tab 3: Goals ──────────────────────────── -->
+      <div id="tab-goals" class="tab-pane hidden">
 
-      <div id="quick-foods">
-        <div class="quick-section">
-          <button class="quick-toggle" id="recent-toggle"><span class="toggle-arrow">▶</span> Recent</button>
-          <ul id="recent-list" class="quick-list hidden"></ul>
-        </div>
-        <div class="quick-section">
-          <button class="quick-toggle" id="fav-toggle"><span class="toggle-arrow">▶</span> Favorites</button>
-          <ul id="fav-list" class="quick-list hidden"></ul>
-        </div>
-      </div>
+        <!-- Calorie + macro goals -->
+        <section id="goal-section" class="card">
+          <h2>Daily Calorie Goal</h2>
+          <div class="goal-input-row">
+            <input id="goal-input" type="number" min="1" placeholder="e.g. 2000">
+            <span>kcal</span>
+            <button id="set-goal-btn">Set Goal</button>
+          </div>
 
-      <div id="api-key-wrap">
-        <button id="api-key-toggle" class="api-key-toggle">⚙ USDA API Key</button>
-        <div id="api-key-form" class="hidden">
-          <input id="api-key-input" type="password" placeholder="Paste key from api.data.gov" autocomplete="off">
-          <button id="api-key-save-btn">Save</button>
-          <a href="https://api.data.gov/signup" target="_blank" class="api-key-link">Get free key →</a>
-        </div>
-      </div>
+          <div class="goal-divider"></div>
 
-      <div class="divider">— or add manually —</div>
+          <h2>Macro Goals</h2>
+          <div id="macro-goals-form">
+            <div class="macro-input-row">
+              <label>Protein</label>
+              <input id="macro-protein-input" type="number" min="0" placeholder="150">
+              <span class="unit-label">g</span>
+              <label>Carbs</label>
+              <input id="macro-carbs-input" type="number" min="0" placeholder="200">
+              <span class="unit-label">g</span>
+              <label>Fat</label>
+              <input id="macro-fat-input" type="number" min="0" placeholder="65">
+              <span class="unit-label">g</span>
+              <button id="macro-save-btn">Save</button>
+            </div>
+          </div>
+        </section>
 
-      <div class="manual-row">
-        <input id="manual-name" type="text" placeholder="Food name">
-        <input id="manual-calories" type="number" min="1" placeholder="kcal">
-        <button id="add-manual-btn">Add</button>
-      </div>
-      <div class="manual-macro-row">
-        <span class="manual-macro-hint">Optional macros:</span>
-        <input id="manual-protein" type="number" min="0" placeholder="Protein g">
-        <input id="manual-carbs"   type="number" min="0" placeholder="Carbs g">
-        <input id="manual-fat"     type="number" min="0" placeholder="Fat g">
-      </div>
-      <p id="manual-error" class="error-msg"></p>
-    </section>
+        <!-- TDEE / Cutting & Bulking calculator -->
+        <section id="plan-section" class="card">
+          <h2>Cutting &amp; Bulking Plans</h2>
 
-    <!-- Section 4: Today's Log -->
-    <section id="log-section" class="card">
-      <h2>Today's Log</h2>
-      <table id="log-table">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Food</th>
-            <th>kcal</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="log-body"></tbody>
-      </table>
-      <p id="daily-total" class="total-label">Total: 0 kcal</p>
-    </section>
+          <div class="plan-inputs">
+            <div class="plan-row">
+              <label class="plan-label">Sex</label>
+              <div class="seg-control">
+                <button class="seg-btn active" data-val="male">Male</button>
+                <button class="seg-btn" data-val="female">Female</button>
+              </div>
+            </div>
+            <div class="plan-row">
+              <label class="plan-label" for="plan-age">Age</label>
+              <div class="plan-input-unit">
+                <input id="plan-age" type="number" min="10" max="120" placeholder="25">
+                <span class="unit-label">yr</span>
+              </div>
+            </div>
+            <div class="plan-row">
+              <label class="plan-label">Height</label>
+              <div class="plan-input-unit">
+                <input id="plan-height-ft" type="number" min="1" max="8" placeholder="5">
+                <span class="unit-label">ft</span>
+                <input id="plan-height-in" type="number" min="0" max="11" placeholder="10">
+                <span class="unit-label">in</span>
+              </div>
+            </div>
+            <div class="plan-row">
+              <label class="plan-label" for="plan-weight">Weight</label>
+              <div class="plan-input-unit">
+                <input id="plan-weight" type="number" min="1" step="0.1" placeholder="154">
+                <span class="unit-label">lbs</span>
+              </div>
+            </div>
+            <div class="plan-row">
+              <label class="plan-label" for="plan-activity">Activity</label>
+              <select id="plan-activity">
+                <option value="1.2">Sedentary (desk job, no exercise)</option>
+                <option value="1.375">Lightly active (1–3×/week)</option>
+                <option value="1.55" selected>Moderately active (3–5×/week)</option>
+                <option value="1.725">Very active (6–7×/week)</option>
+                <option value="1.9">Extra active (physical job + exercise)</option>
+              </select>
+            </div>
+            <button id="calc-plan-btn">Calculate Plans</button>
+            <p id="plan-error" class="error-msg"></p>
+          </div>
 
-    <!-- Section 5: History & Chart -->
-    <section id="history-section" class="card">
-      <h2>History (Last 7 Days)</h2>
-      <canvas id="history-chart"></canvas>
-      <ul id="history-list"></ul>
-    </section>
+          <div id="plan-results" class="plan-results hidden">
+            <p class="tdee-info">Estimated daily burn: <strong id="tdee-value">—</strong> kcal</p>
+            <div class="plan-cards">
+              <div class="plan-card cut">
+                <div class="plan-card-title">Cutting</div>
+                <div class="plan-card-sub">Lose Fat</div>
+                <div class="plan-card-kcal" id="cut-kcal">—</div>
+                <div class="plan-card-detail" id="cut-detail">—</div>
+                <button class="plan-apply-btn" id="cut-apply-btn">Apply Goal</button>
+              </div>
+              <div class="plan-card bulk">
+                <div class="plan-card-title">Bulking</div>
+                <div class="plan-card-sub">Build Muscle</div>
+                <div class="plan-card-kcal" id="bulk-kcal">—</div>
+                <div class="plan-card-detail" id="bulk-detail">—</div>
+                <button class="plan-apply-btn" id="bulk-apply-btn">Apply Goal</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div><!-- #tab-goals -->
+
+    </div><!-- #tab-content -->
 
   </div><!-- #app -->
 

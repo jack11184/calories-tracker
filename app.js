@@ -302,8 +302,19 @@ function renderProgress() {
   document.getElementById('progress-label').textContent =
     `${total.toLocaleString()} / ${goal.toLocaleString()} kcal`;
 
+  // Big summary numbers on Overview tab
+  const remaining    = goal - total;
+  const consumedEl   = document.getElementById('kcal-consumed');
+  const remainingEl  = document.getElementById('kcal-remaining');
+  const remainLblEl  = document.getElementById('kcal-remaining-label');
+  const remainStat   = document.getElementById('kcal-remaining-stat');
+  if (consumedEl)  consumedEl.textContent  = total.toLocaleString();
+  if (remainingEl) remainingEl.textContent = Math.abs(remaining).toLocaleString();
+  if (remainLblEl) remainLblEl.textContent = remaining >= 0 ? 'remaining' : 'over goal';
+  if (remainStat)  remainStat.classList.toggle('over', remaining < 0);
+
   const goalInput = document.getElementById('goal-input');
-  if (!goalInput.matches(':focus')) goalInput.value = goal;
+  if (goalInput && !goalInput.matches(':focus')) goalInput.value = goal;
 
   // Macro progress bars
   const mg = data.macroGoals || {};
@@ -333,22 +344,7 @@ function renderProgress() {
 }
 
 function initMacroGoals() {
-  const toggle  = document.getElementById('macro-goals-toggle');
-  const form    = document.getElementById('macro-goals-form');
-  const saveBtn = document.getElementById('macro-save-btn');
-
-  toggle.addEventListener('click', () => {
-    const hidden = form.classList.toggle('hidden');
-    toggle.textContent = hidden ? 'Set Macros' : 'Hide Macros';
-    if (!hidden) {
-      const mg = loadData().macroGoals || {};
-      document.getElementById('macro-protein-input').value = mg.protein ?? '';
-      document.getElementById('macro-carbs-input').value   = mg.carbs   ?? '';
-      document.getElementById('macro-fat-input').value     = mg.fat     ?? '';
-    }
-  });
-
-  saveBtn.addEventListener('click', () => {
+  document.getElementById('macro-save-btn').addEventListener('click', () => {
     const data = loadData();
     const p = parseFloat(document.getElementById('macro-protein-input').value);
     const c = parseFloat(document.getElementById('macro-carbs-input').value);
@@ -356,9 +352,20 @@ function initMacroGoals() {
     data.macroGoals = { protein: isNaN(p) ? null : p, carbs: isNaN(c) ? null : c, fat: isNaN(f) ? null : f };
     saveData(data);
     renderProgress();
-    form.classList.add('hidden');
-    toggle.textContent = 'Set Macros';
+    const btn = document.getElementById('macro-save-btn');
+    btn.textContent = 'Saved!';
+    setTimeout(() => { btn.textContent = 'Save'; }, 1500);
   });
+}
+
+function restoreMacroGoals() {
+  const mg = loadData().macroGoals || {};
+  const pi = document.getElementById('macro-protein-input');
+  const ci = document.getElementById('macro-carbs-input');
+  const fi = document.getElementById('macro-fat-input');
+  if (pi && !pi.matches(':focus')) pi.value = mg.protein ?? '';
+  if (ci && !ci.matches(':focus')) ci.value = mg.carbs   ?? '';
+  if (fi && !fi.matches(':focus')) fi.value = mg.fat     ?? '';
 }
 
 // ── Local food database (always-available fallback) ───────────────────────────
@@ -1284,7 +1291,7 @@ function applyPlanGoal(calories, type) {
   btn.textContent = 'Goal Applied!';
   btn.disabled = true;
   setTimeout(() => { btn.textContent = 'Apply Goal'; btn.disabled = false; }, 1500);
-  document.getElementById('goal-section').scrollIntoView({ behavior: 'smooth' });
+  restoreMacroGoals();
 }
 
 // ── Recent foods & Favorites ──────────────────────────────────────────────────
@@ -1353,8 +1360,28 @@ function initQuickFoods() {
 
 // ── Render all (used when switching profiles) ─────────────────────────────────
 
+// ── Tab navigation ────────────────────────────────────────────────────────────
+
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+  document.querySelector(`.tab-btn[data-tab="${tabId}"]`).classList.add('active');
+  if (tabId === 'overview') renderChart();
+  if (tabId === 'goals')    restoreMacroGoals();
+}
+
+function initTabs() {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+}
+
+// ── Render all (used when switching profiles) ─────────────────────────────────
+
 function renderAll() {
   restorePlanSection();
+  restoreMacroGoals();
   renderLog();
   renderProgress();
   renderHistory();
@@ -1416,6 +1443,7 @@ function initApp() {
   document.getElementById('add-manual-btn').addEventListener('click', addManualEntry);
   document.getElementById('manual-calories').addEventListener('keydown', e => { if (e.key === 'Enter') addManualEntry(); });
 
+  initTabs();
   initPlanSection();
   initApiKeySection();
   initMacroGoals();
