@@ -101,9 +101,10 @@ async function tryRestoreSavedHandle() {
     return true;
   }
   if (perm === 'prompt') {
-    // Show one-click "continue with" button
+    // Show one-click "continue with" button; hide the new/open options
     document.getElementById('db-filename').textContent = handle.name;
     document.getElementById('db-restore').classList.remove('hidden');
+    document.querySelector('.db-actions').classList.add('hidden');
     document.getElementById('db-restore-btn').onclick = async () => {
       const granted = await handle.requestPermission({ mode: 'readwrite' });
       if (granted === 'granted') {

@@ -15,16 +15,15 @@
       <h2>My Calorie Tracker</h2>
       <p class="db-subtitle">Your data is saved to a <strong>.json</strong> file on your computer that you choose.</p>
 
-      <div id="db-restore" class="hidden">
-        <button id="db-restore-btn" class="db-btn-primary">
-          Continue with "<span id="db-filename"></span>"
-        </button>
-        <div class="db-or">or</div>
+      <div class="db-actions">
+        <button id="db-create-btn" class="db-btn-create">Create new database</button>
+        <button id="db-open-btn" class="db-btn-open">Open database file</button>
       </div>
 
-      <div class="db-actions">
-        <button id="db-open-btn" class="db-btn-primary">Open database file</button>
-        <button id="db-create-btn" class="db-btn-secondary">Create new database</button>
+      <div id="db-restore" class="hidden">
+        <button id="db-restore-btn" class="db-btn-restore">
+          Continue with "<span id="db-filename"></span>"
+        </button>
       </div>
 
       <p id="db-error" class="db-error"></p>
