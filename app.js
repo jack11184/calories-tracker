@@ -191,7 +191,11 @@ function setActiveProfile(name) {
 // ── Data layer ────────────────────────────────────────────────────────────────
 
 function getToday() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function loadData() {
@@ -1127,7 +1131,10 @@ function getLast7Days() {
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    days.push(`${y}-${m}-${day}`);
   }
   return days;
 }
