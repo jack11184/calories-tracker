@@ -76,4 +76,17 @@ router.get('/me', auth, async (req, res) => {
   }
 });
 
+// PUT /api/auth/usda-key - save USDA API key for current user
+router.put('/usda-key', auth, async (req, res) => {
+  try {
+    const { usda_api_key } = req.body;
+    const key = typeof usda_api_key === 'string' ? usda_api_key.trim().slice(0, 64) : null;
+    await pool.query('UPDATE users SET usda_api_key = $1 WHERE id = $2', [key || null, req.userId]);
+    res.json({ usda_api_key: key || null });
+  } catch (err) {
+    console.error('Save USDA key error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

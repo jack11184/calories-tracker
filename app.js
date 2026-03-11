@@ -1077,22 +1077,47 @@ async function startBarcodeScanZXing() {
 
 async function handleBarcodePhoto(file) {
   if (!file) return;
-  const ZXingBrowser = resolveZXing();
-  if (!ZXingBrowser) {
-    setBarcodeStatus('Cannot decode photo — library unavailable. Enter UPC manually.', true);
+  const ZXingLib = resolveZXing();
+  if (!ZXingLib) {
+    setBarcodeStatus('Scanner library not loaded. Hard-refresh the page and try again.', true);
     return;
   }
+
   setBarcodeStatus('Reading barcode from photo...');
   const url = URL.createObjectURL(file);
+
   try {
-    const reader = new ZXingBrowser.BrowserMultiFormatReader();
-    const result = await reader.decodeFromImageUrl(url);
+    // Load the image into an HTMLImageElement first — most reliable cross-version approach.
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Image failed to load'));
+      el.src = url;
+    });
+
+    const reader = new ZXingLib.BrowserMultiFormatReader();
+
+    // decodeFromImageElement is stable across @zxing/library versions.
+    const result = typeof reader.decodeFromImageElement === 'function'
+      ? await reader.decodeFromImageElement(img)
+      : await reader.decode(img);
+
     const value = sanitizeBarcode(result.getText());
-    if (!value) throw new Error('empty');
+    if (!value) {
+      setBarcodeStatus('Barcode decoded but contained no numbers. Try again.', true);
+      return;
+    }
+
     document.getElementById('barcode-input').value = value;
+    setBarcodeStatus(`Barcode read: ${value}`);
     await lookupBarcode(value);
-  } catch {
-    setBarcodeStatus('No barcode found in photo. Try again or enter UPC manually.', true);
+  } catch (err) {
+    const msg = String(err?.message || '').toLowerCase();
+    if (msg.includes('no multiformat') || msg.includes('not found') || msg.includes('no barcode')) {
+      setBarcodeStatus('No barcode detected in photo. Make sure barcode is clear and try again.', true);
+    } else {
+      setBarcodeStatus(`Photo scan error: ${err?.message || 'unknown'}. Try again or enter UPC manually.`, true);
+    }
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -1761,12 +1786,17 @@ function initApiKeySection() {
     if (!hidden && usdaApiKey) input.value = usdaApiKey;
   });
 
-  saveBtn.addEventListener('click', () => {
+  saveBtn.addEventListener('click', async () => {
     const key = input.value.trim();
     usdaApiKey = key || null;
     updateToggleLabel();
     form.classList.add('hidden');
     input.value = '';
+    try {
+      await api('/auth/usda-key', { method: 'PUT', body: JSON.stringify({ usda_api_key: key || null }) });
+    } catch (err) {
+      console.warn('Could not save USDA key to server:', err);
+    }
   });
 }
 
