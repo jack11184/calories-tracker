@@ -48,6 +48,37 @@ async function fetchWithTimeout(url, timeoutMs = 7000) {
   }
 }
 
+function round1(v) {
+  return v != null ? Math.round(Number(v) * 10) / 10 : null;
+}
+
+function clampResults(items, max = 12) {
+  return items.slice(0, max);
+}
+
+function foodQualityScore(food) {
+  let score = 0;
+  if (food.brand) score += 2;
+  if (food.protein != null) score += 1;
+  if (food.carbs != null) score += 1;
+  if (food.fat != null) score += 1;
+  if (food.kcalPer100g != null) score += 2;
+  if (food.source === 'USDA FoodData Central') score += 1;
+  return score;
+}
+
+function dedupeFoods(items) {
+  const map = new Map();
+  for (const item of items) {
+    const key = `${String(item.name || '').trim().toLowerCase()}|${String(item.brand || '').trim().toLowerCase()}`;
+    const existing = map.get(key);
+    if (!existing || foodQualityScore(item) > foodQualityScore(existing)) {
+      map.set(key, item);
+    }
+  }
+  return Array.from(map.values());
+}
+
 function mapOpenFoodFactsProduct(product, barcode) {
   const kcal = product?.nutriments?.['energy-kcal_100g'] ?? product?.nutriments?.['energy-kcal'];
   const round1 = v => (v != null ? Math.round(v * 10) / 10 : null);
@@ -60,6 +91,70 @@ function mapOpenFoodFactsProduct(product, barcode) {
     carbs: round1(product?.nutriments?.['carbohydrates_100g']),
     fat: round1(product?.nutriments?.['fat_100g']),
   };
+}
+
+async function getUserUsdaApiKey(userId) {
+  const result = await pool.query('SELECT usda_api_key FROM users WHERE id = $1', [userId]);
+  return result.rows[0]?.usda_api_key || null;
+}
+
+async function searchUSDA(query, userUsdaKey) {
+  const params = new URLSearchParams({
+    query,
+    dataType: 'SR Legacy,Survey (FNDDS),Branded',
+    pageSize: '12',
+    api_key: userUsdaKey || 'DEMO_KEY',
+  });
+
+  const json = await fetchWithTimeout(`https://api.nal.usda.gov/fdc/v1/foods/search?${params}`, 7000);
+  return (json.foods || [])
+    .map(food => {
+      const nutrients = food.foodNutrients || [];
+      const kcalN = nutrients.find(n => n.nutrientName === 'Energy' && n.unitName?.toLowerCase() === 'kcal');
+      if (!(kcalN?.value > 0)) return null;
+      const proteinN = nutrients.find(n => n.nutrientName === 'Protein');
+      const carbsN = nutrients.find(n => n.nutrientName === 'Carbohydrate, by difference');
+      const fatN = nutrients.find(n => n.nutrientName === 'Total lipid (fat)');
+
+      return {
+        name: (food.description || '').trim(),
+        brand: food.brandOwner?.trim() || food.brandName?.trim() || '',
+        kcalPer100g: Math.round(Number(kcalN.value)),
+        protein: round1(proteinN?.value),
+        carbs: round1(carbsN?.value),
+        fat: round1(fatN?.value),
+        source: 'USDA FoodData Central',
+      };
+    })
+    .filter(Boolean);
+}
+
+async function searchOpenFoodFacts(query) {
+  const params = new URLSearchParams({
+    action: 'process',
+    search_terms: query,
+    search_simple: '1',
+    json: '1',
+    page_size: '12',
+    fields: 'product_name,brands,nutriments',
+  });
+
+  const json = await fetchWithTimeout(`https://world.openfoodfacts.org/cgi/search.pl?${params}`, 10000);
+  return (json.products || [])
+    .map(product => {
+      const kcal = product.nutriments?.['energy-kcal_100g'] ?? product.nutriments?.['energy-kcal'];
+      if (!(kcal > 0) || !product.product_name?.trim()) return null;
+      return {
+        name: product.product_name.trim(),
+        brand: product.brands?.split(',')[0]?.trim() || '',
+        kcalPer100g: Math.round(Number(kcal)),
+        protein: round1(product.nutriments?.['proteins_100g']),
+        carbs: round1(product.nutriments?.['carbohydrates_100g']),
+        fat: round1(product.nutriments?.['fat_100g']),
+        source: 'Open Food Facts',
+      };
+    })
+    .filter(Boolean);
 }
 
 async function verifyProfile(profileId, userId) {
@@ -116,6 +211,45 @@ router.post('/:profileId/recent', async (req, res) => {
     res.status(201).json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/foods/:profileId/search?q=...
+router.get('/:profileId/search', async (req, res) => {
+  try {
+    if (!(await verifyProfile(req.params.profileId, req.userId))) {
+      return res.status(404).json({ error: 'Profile not found' });
+    }
+
+    const query = String(req.query.q || '').trim();
+    if (query.length < 2) {
+      return res.status(400).json({ error: 'Please enter at least 2 characters.' });
+    }
+
+    const usdaApiKey = await getUserUsdaApiKey(req.userId);
+
+    const [usdaResults, offResults] = await Promise.allSettled([
+      searchUSDA(query, usdaApiKey),
+      searchOpenFoodFacts(query),
+    ]);
+
+    const merged = [];
+    if (usdaResults.status === 'fulfilled') merged.push(...usdaResults.value);
+    if (offResults.status === 'fulfilled') merged.push(...offResults.value);
+
+    if (!merged.length) {
+      return res.json({ source: 'none', results: [] });
+    }
+
+    const ranked = dedupeFoods(merged)
+      .sort((a, b) => foodQualityScore(b) - foodQualityScore(a));
+
+    res.json({
+      source: 'USDA + Open Food Facts',
+      results: clampResults(ranked, 12),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Food search failed.' });
   }
 });
 

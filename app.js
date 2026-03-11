@@ -24,6 +24,7 @@ let todayEntries = [];        // food entries for today
 let usdaApiKey = null;
 let barcodeScanStream = null;
 let barcodeScanTimer = null;
+let barcodeZXingReader = null;
 
 // ── Auth UI ──────────────────────────────────────────────────────────────────
 
@@ -981,6 +982,10 @@ function stopBarcodeScan() {
     barcodeScanStream.getTracks().forEach(track => track.stop());
     barcodeScanStream = null;
   }
+  if (barcodeZXingReader) {
+    try { barcodeZXingReader.reset(); } catch { /* noop */ }
+    barcodeZXingReader = null;
+  }
 
   const video = document.getElementById('barcode-video');
   if (video) {
@@ -990,13 +995,69 @@ function stopBarcodeScan() {
   document.getElementById('barcode-scanner-wrap')?.classList.add('hidden');
 }
 
+function isLocalDevHost() {
+  return location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+}
+
+function hasSecureCameraContext() {
+  return window.isSecureContext || isLocalDevHost();
+}
+
+async function startBarcodeScanZXing() {
+  const ZXingBrowser = window.ZXingBrowser;
+  if (!ZXingBrowser?.BrowserMultiFormatReader) {
+    setBarcodeStatus('Scanner library failed to load. Enter UPC/EAN manually.', true);
+    return;
+  }
+
+  const wrap = document.getElementById('barcode-scanner-wrap');
+  const video = document.getElementById('barcode-video');
+  if (!video || !wrap) return;
+
+  stopBarcodeScan();
+  setBarcodeStatus('Starting camera scanner...');
+
+  try {
+    barcodeZXingReader = new ZXingBrowser.BrowserMultiFormatReader();
+    wrap.classList.remove('hidden');
+
+    let resolved = false;
+    await barcodeZXingReader.decodeFromVideoDevice(undefined, video, async (result, err) => {
+      if (resolved) return;
+      if (result?.getText) {
+        const value = sanitizeBarcode(result.getText());
+        if (!value) return;
+        resolved = true;
+        document.getElementById('barcode-input').value = value;
+        stopBarcodeScan();
+        await lookupBarcode(value);
+        return;
+      }
+
+      // Ignore routine "not found in frame" signals.
+      if (err && String(err.name || '').toLowerCase().includes('notfound')) return;
+    });
+
+    setBarcodeStatus('Point your camera at a barcode...');
+  } catch {
+    setBarcodeStatus('Unable to access camera. Allow permission and try again.', true);
+    stopBarcodeScan();
+  }
+}
+
 async function startBarcodeScan() {
   if (!navigator.mediaDevices?.getUserMedia) {
     setBarcodeStatus('Camera access is not available in this browser.', true);
     return;
   }
+
+  if (!hasSecureCameraContext()) {
+    setBarcodeStatus('Camera requires HTTPS on phone. Open this site with HTTPS or use manual barcode input.', true);
+    return;
+  }
+
   if (!('BarcodeDetector' in window)) {
-    setBarcodeStatus('Barcode scanner not supported here. Enter UPC/EAN manually.', true);
+    await startBarcodeScanZXing();
     return;
   }
 
@@ -1041,7 +1102,7 @@ async function startBarcodeScan() {
       }
     }, 400);
   } catch {
-    setBarcodeStatus('Unable to access camera. Check permissions and try again.', true);
+    setBarcodeStatus('Unable to access camera. Allow permissions and try again.', true);
     stopBarcodeScan();
   }
 }
@@ -1078,6 +1139,18 @@ async function searchFood() {
   const resultsList = document.getElementById('search-results');
   document.getElementById('search-status').textContent = '';
   resultsList.innerHTML = '<li style="color:#a0aec0;font-style:italic">Searching\u2026</li>';
+
+  // Fast path: use backend unified search so users get one ranked result list.
+  try {
+    const data = await api(`/foods/${activeProfile.id}/search?q=${encodeURIComponent(query)}`);
+    if (data?.results?.length) {
+      setSearchStatus(data.source || 'Cloud search', false);
+      displaySearchResults(data.results);
+      return;
+    }
+  } catch {
+    // Fall back to legacy client-side providers below.
+  }
 
   const winner = await Promise.any([
     searchUSDA(query).then(r => ({ results: r, source: 'USDA FoodData Central', fallback: false })),
