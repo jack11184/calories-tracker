@@ -139,6 +139,16 @@
             <input id="search-input" type="text" placeholder="Search food (e.g. apple, rice...)">
             <button id="search-btn">Search</button>
           </div>
+          <div class="barcode-row">
+            <button id="scan-barcode-btn" type="button">Scan Barcode</button>
+            <input id="barcode-input" type="text" inputmode="numeric" placeholder="UPC/EAN code">
+            <button id="barcode-lookup-btn" type="button">Lookup</button>
+          </div>
+          <p id="barcode-status" class="barcode-status"></p>
+          <div id="barcode-scanner-wrap" class="hidden">
+            <video id="barcode-video" autoplay muted playsinline></video>
+            <button id="stop-scan-btn" type="button" class="stop-scan-btn">Stop Scan</button>
+          </div>
           <ul id="search-results"></ul>
           <p id="search-status"></p>
 

@@ -22,6 +22,8 @@ let profiles = [];            // [{id, name, goal, protein_goal, carbs_goal, fat
 let activeProfile = null;     // the active profile object
 let todayEntries = [];        // food entries for today
 let usdaApiKey = null;
+let barcodeScanStream = null;
+let barcodeScanTimer = null;
 
 // ── Auth UI ──────────────────────────────────────────────────────────────────
 
@@ -115,6 +117,7 @@ async function doRegister() {
 }
 
 function logout() {
+  stopBarcodeScan();
   authToken = null;
   localStorage.removeItem('ct_token');
   profiles = [];
@@ -936,6 +939,130 @@ async function searchOpenFoodFacts(query) {
   }
 }
 
+function sanitizeBarcode(value) {
+  return String(value || '').replace(/[^0-9]/g, '');
+}
+
+function setBarcodeStatus(msg, isError = false) {
+  const el = document.getElementById('barcode-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = isError ? '#c53030' : '#718096';
+}
+
+async function lookupBarcode(barcode) {
+  if (!activeProfile) return;
+  const clean = sanitizeBarcode(barcode);
+  if (!clean || clean.length < 8 || clean.length > 14) {
+    setBarcodeStatus('Enter a valid UPC/EAN code (8-14 digits).', true);
+    return;
+  }
+
+  setBarcodeStatus(`Looking up barcode ${clean}...`);
+  try {
+    const data = await api(`/foods/${activeProfile.id}/barcode/${clean}`);
+    const food = data.food;
+    setBarcodeStatus(`Found: ${food.name}`);
+    setSearchStatus(`${data.source} (Barcode)`, true);
+    displaySearchResults([food]);
+  } catch (err) {
+    setBarcodeStatus(err.message || 'Barcode lookup failed.', true);
+    document.getElementById('search-results').innerHTML =
+      '<li style="color:#a0aec0;font-style:italic">No product found for that barcode.</li>';
+  }
+}
+
+function stopBarcodeScan() {
+  if (barcodeScanTimer) {
+    clearInterval(barcodeScanTimer);
+    barcodeScanTimer = null;
+  }
+  if (barcodeScanStream) {
+    barcodeScanStream.getTracks().forEach(track => track.stop());
+    barcodeScanStream = null;
+  }
+
+  const video = document.getElementById('barcode-video');
+  if (video) {
+    video.pause();
+    video.srcObject = null;
+  }
+  document.getElementById('barcode-scanner-wrap')?.classList.add('hidden');
+}
+
+async function startBarcodeScan() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setBarcodeStatus('Camera access is not available in this browser.', true);
+    return;
+  }
+  if (!('BarcodeDetector' in window)) {
+    setBarcodeStatus('Barcode scanner not supported here. Enter UPC/EAN manually.', true);
+    return;
+  }
+
+  let detector;
+  try {
+    detector = new window.BarcodeDetector({ formats: ['upc_a', 'upc_e', 'ean_13', 'ean_8', 'code_128'] });
+  } catch {
+    setBarcodeStatus('Barcode format is not supported on this device.', true);
+    return;
+  }
+
+  stopBarcodeScan();
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false,
+    });
+    barcodeScanStream = stream;
+
+    const wrap = document.getElementById('barcode-scanner-wrap');
+    const video = document.getElementById('barcode-video');
+    if (!video || !wrap) return;
+
+    video.srcObject = stream;
+    await video.play();
+    wrap.classList.remove('hidden');
+    setBarcodeStatus('Point your camera at a barcode...');
+
+    barcodeScanTimer = setInterval(async () => {
+      if (!video.videoWidth || !video.videoHeight) return;
+      try {
+        const codes = await detector.detect(video);
+        if (!codes?.length) return;
+        const value = sanitizeBarcode(codes[0].rawValue);
+        if (!value) return;
+
+        document.getElementById('barcode-input').value = value;
+        stopBarcodeScan();
+        await lookupBarcode(value);
+      } catch {
+        // Ignore intermittent detect errors while camera initializes.
+      }
+    }, 400);
+  } catch {
+    setBarcodeStatus('Unable to access camera. Check permissions and try again.', true);
+    stopBarcodeScan();
+  }
+}
+
+function initBarcodeSection() {
+  const scanBtn = document.getElementById('scan-barcode-btn');
+  const lookupBtn = document.getElementById('barcode-lookup-btn');
+  const stopBtn = document.getElementById('stop-scan-btn');
+  const input = document.getElementById('barcode-input');
+
+  scanBtn.addEventListener('click', startBarcodeScan);
+  stopBtn.addEventListener('click', () => {
+    stopBarcodeScan();
+    setBarcodeStatus('Scan stopped.');
+  });
+  lookupBtn.addEventListener('click', () => lookupBarcode(input.value));
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') lookupBarcode(input.value);
+  });
+}
+
 let searchCount = 0;
 
 function setSearchStatus(dbName, isFallback) {
@@ -1437,6 +1564,7 @@ function initQuickFoods() {
 // ── Tab navigation ───────────────────────────────────────────────────────────
 
 function switchTab(tabId) {
+  if (tabId !== 'add-food') stopBarcodeScan();
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`tab-${tabId}`).classList.remove('hidden');
@@ -1537,6 +1665,7 @@ async function initApp() {
   initTabs();
   initPlanSection();
   initApiKeySection();
+  initBarcodeSection();
   initMacroGoals();
   initQuickFoods();
   renderProfileBar();
