@@ -140,19 +140,18 @@
             <button id="search-btn">Search</button>
           </div>
           <div class="barcode-row">
-            <button id="scan-barcode-btn" type="button">Scan Barcode</button>
             <input id="barcode-input" type="text" inputmode="numeric" placeholder="UPC/EAN code">
             <button id="barcode-lookup-btn" type="button">Lookup</button>
           </div>
           <p id="barcode-status" class="barcode-status"></p>
-          <div id="barcode-scanner-wrap" class="hidden">
-            <video id="barcode-video" autoplay muted playsinline webkit-playsinline></video>
-            <button id="stop-scan-btn" type="button" class="stop-scan-btn">&#x25A0; Stop Scan</button>
-          </div>
-          <label id="barcode-photo-fallback" class="barcode-photo-label hidden">
-            <span>&#x1F4F7; Scan from Photo</span>
+          <label class="barcode-photo-label" for="barcode-photo-input">
+            <span>&#x1F4F7; Scan Barcode from Camera / Photo</span>
             <input type="file" accept="image/*" capture="environment" id="barcode-photo-input">
           </label>
+          <div id="barcode-preview-wrap" class="hidden">
+            <img id="barcode-preview-img" alt="Selected photo">
+            <button id="barcode-confirm-btn" type="button" class="barcode-confirm-btn">Scan Barcode</button>
+          </div>
           <ul id="search-results"></ul>
           <p id="search-status"></p>
 
