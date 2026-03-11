@@ -1033,7 +1033,10 @@ async function startBarcodeScanZXing() {
   let started = false;
   for (const constraints of constraintOptions) {
     try {
-      barcodeZXingReader = new ZXingBrowser.BrowserMultiFormatReader();
+      barcodeZXingReader = new ZXingBrowser.BrowserMultiFormatReader(null, {
+        delayBetweenScanAttempts: 300,
+        delayBetweenScanSuccess: 1000,
+      });
       let resolved = false;
 
       await barcodeZXingReader.decodeFromConstraints(constraints, video, async (result, err) => {
@@ -1074,8 +1077,8 @@ async function startBarcodeScanZXing() {
 
 async function handleBarcodePhoto(file) {
   if (!file) return;
-  const ZXingBrowser = window.ZXingBrowser;
-  if (!ZXingBrowser?.BrowserMultiFormatReader) {
+  const ZXingBrowser = resolveZXing();
+  if (!ZXingBrowser) {
     setBarcodeStatus('Cannot decode photo — library unavailable. Enter UPC manually.', true);
     return;
   }
