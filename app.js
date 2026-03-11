@@ -1,194 +1,171 @@
-// ── File System helpers (IndexedDB stores the file handle between sessions) ────
+// ── API layer ────────────────────────────────────────────────────────────────
 
-let fileHandle = null; // the FileSystemFileHandle for database.json
-let dbData     = null; // in-memory mirror of the file
-let writeTimer = null; // debounce timer for file writes
+const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  ? `${location.protocol}//${location.hostname}:3000/api`
+  : '/api';
 
-const HANDLE_STORE = 'calTracker_handle';
+let authToken = localStorage.getItem('ct_token');
 
-function openIDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('calTrackerDB', 1);
-    req.onupgradeneeded = e => e.target.result.createObjectStore('handles');
-    req.onsuccess  = e => resolve(e.target.result);
-    req.onerror    = e => reject(e.target.error);
-  });
+async function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
 }
 
-async function saveHandleToIDB(handle) {
-  try {
-    const db = await openIDB();
-    const tx = db.transaction('handles', 'readwrite');
-    tx.objectStore('handles').put(handle, HANDLE_STORE);
-    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = e => rej(e.target.error); });
-  } catch { /* non-fatal */ }
-}
+// ── State ────────────────────────────────────────────────────────────────────
 
-async function loadHandleFromIDB() {
-  try {
-    const db  = await openIDB();
-    const tx  = db.transaction('handles', 'readonly');
-    const req = tx.objectStore('handles').get(HANDLE_STORE);
-    return await new Promise((res, rej) => { req.onsuccess = e => res(e.target.result); req.onerror = e => rej(e.target.error); });
-  } catch { return null; }
-}
+let profiles = [];            // [{id, name, goal, protein_goal, carbs_goal, fat_goal, is_active}]
+let activeProfile = null;     // the active profile object
+let todayEntries = [];        // food entries for today
+let usdaApiKey = null;
 
-// ── Read / write the JSON file ────────────────────────────────────────────────
-
-const BLANK_DB = () => ({
-  activeProfile: 'Me',
-  usdaApiKey: null,
-  profiles: {
-    Me: { goal: 2000, macroGoals: { protein: null, carbs: null, fat: null }, days: {}, planStats: null, recentFoods: [], favoriteFoods: [] },
-  },
-});
-
-async function readFromFile() {
-  const file = await fileHandle.getFile();
-  const text = await file.text();
-  try {
-    dbData = JSON.parse(text);
-    if (!dbData.profiles)      dbData.profiles = {};
-    if (!dbData.activeProfile) dbData.activeProfile = Object.keys(dbData.profiles)[0] || 'Me';
-    if (!dbData.profiles[dbData.activeProfile]) {
-      dbData.profiles[dbData.activeProfile] = { goal: 2000, days: {}, planStats: null };
-    }
-  } catch {
-    dbData = BLANK_DB();
-  }
-}
-
-async function writeToFile() {
-  if (!fileHandle) return;
-  try {
-    const writable = await fileHandle.createWritable();
-    await writable.write(JSON.stringify(dbData, null, 2));
-    await writable.close();
-  } catch (err) {
-    console.error('File write error:', err);
-  }
-}
-
-function scheduleWrite() {
-  clearTimeout(writeTimer);
-  writeTimer = setTimeout(writeToFile, 250);
-}
-
-// ── Database overlay UI ───────────────────────────────────────────────────────
+// ── Auth UI ──────────────────────────────────────────────────────────────────
 
 function showOverlay() {
   document.getElementById('db-overlay').style.display = 'flex';
-  document.getElementById('app').classList.add('hidden');
+  document.getElementById('app').style.display = 'none';
 }
 
 function hideOverlay() {
   document.getElementById('db-overlay').style.display = 'none';
-  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('app').style.display = 'block';
 }
 
 function setDbError(msg) {
   document.getElementById('db-error').textContent = msg;
 }
 
-async function tryRestoreSavedHandle() {
-  const handle = await loadHandleFromIDB();
-  if (!handle) return false;
+function initAuth() {
+  const loginForm    = document.getElementById('auth-login-form');
+  const registerForm = document.getElementById('auth-register-form');
 
-  const perm = await handle.queryPermission({ mode: 'readwrite' });
-  if (perm === 'granted') {
-    fileHandle = handle;
-    await readFromFile();
+  document.getElementById('auth-show-register').addEventListener('click', () => {
+    loginForm.style.display = 'none';
+    registerForm.style.display = 'block';
+    setDbError('');
+  });
+  document.getElementById('auth-show-login').addEventListener('click', () => {
+    registerForm.style.display = 'none';
+    loginForm.style.display = 'block';
+    setDbError('');
+  });
+
+  document.getElementById('auth-login-btn').addEventListener('click', doLogin);
+  document.getElementById('auth-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+  document.getElementById('auth-register-btn').addEventListener('click', doRegister);
+  document.getElementById('reg-password2').addEventListener('keydown', e => { if (e.key === 'Enter') doRegister(); });
+}
+
+async function doLogin() {
+  setDbError('');
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if (!username || !password) { setDbError('Please enter username and password.'); return; }
+
+  try {
+    const data = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    }).then(r => r.json());
+
+    if (data.error) { setDbError(data.error); return; }
+    authToken = data.token;
+    localStorage.setItem('ct_token', authToken);
+    usdaApiKey = data.user.usda_api_key || null;
+    hideOverlay();
+    await loadAllData();
+    initApp();
+  } catch (err) {
+    setDbError('Login failed. Check your connection.');
+  }
+}
+
+async function doRegister() {
+  setDbError('');
+  const username  = document.getElementById('reg-username').value.trim();
+  const password  = document.getElementById('reg-password').value;
+  const password2 = document.getElementById('reg-password2').value;
+
+  if (!username || !password) { setDbError('Please fill in all fields.'); return; }
+  if (password !== password2)  { setDbError('Passwords do not match.'); return; }
+  if (password.length < 6)     { setDbError('Password must be at least 6 characters.'); return; }
+
+  try {
+    const data = await fetch(`${API_BASE}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    }).then(r => r.json());
+
+    if (data.error) { setDbError(data.error); return; }
+    authToken = data.token;
+    localStorage.setItem('ct_token', authToken);
+    hideOverlay();
+    await loadAllData();
+    initApp();
+  } catch (err) {
+    setDbError('Registration failed. Check your connection.');
+  }
+}
+
+function logout() {
+  authToken = null;
+  localStorage.removeItem('ct_token');
+  profiles = [];
+  activeProfile = null;
+  todayEntries = [];
+  showOverlay();
+}
+
+async function tryAutoLogin() {
+  if (!authToken) return false;
+  try {
+    const user = await api('/auth/me');
+    usdaApiKey = user.usda_api_key || null;
     return true;
-  }
-  if (perm === 'prompt') {
-    // Show one-click "continue with" button; hide the new/open options
-    document.getElementById('db-filename').textContent = handle.name;
-    document.getElementById('db-restore').classList.remove('hidden');
-    document.querySelector('.db-actions').classList.add('hidden');
-    document.getElementById('db-restore-btn').onclick = async () => {
-      const granted = await handle.requestPermission({ mode: 'readwrite' });
-      if (granted === 'granted') {
-        fileHandle = handle;
-        await readFromFile();
-        await saveHandleToIDB(handle);
-        hideOverlay();
-        initApp();
-      } else {
-        setDbError('Permission denied — please open the file manually.');
-      }
-    };
-  }
-  return false;
-}
-
-async function pickExistingFile() {
-  try {
-    [fileHandle] = await window.showOpenFilePicker({
-      types: [{ description: 'JSON Database', accept: { 'application/json': ['.json'] } }],
-      multiple: false,
-    });
-    await readFromFile();
-    await saveHandleToIDB(fileHandle);
-    hideOverlay();
-    initApp();
-  } catch (err) {
-    if (err.name !== 'AbortError') setDbError('Could not open file. Please try again.');
+  } catch {
+    authToken = null;
+    localStorage.removeItem('ct_token');
+    return false;
   }
 }
 
-async function createNewFile() {
-  try {
-    fileHandle = await window.showSaveFilePicker({
-      suggestedName: 'calories-database.json',
-      types: [{ description: 'JSON Database', accept: { 'application/json': ['.json'] } }],
-    });
-    // Start fresh, but migrate old localStorage data if present
-    const oldRaw = localStorage.getItem('calorieTracker');
-    if (oldRaw) {
-      try {
-        const old = JSON.parse(oldRaw);
-        dbData = {
-          activeProfile: 'Me',
-          profiles: { Me: { goal: old.goal || 2000, days: old.days || {}, planStats: old.planStats || null } },
-        };
-      } catch { dbData = BLANK_DB(); }
-    } else {
-      dbData = BLANK_DB();
-    }
-    await writeToFile();
-    await saveHandleToIDB(fileHandle);
-    hideOverlay();
-    initApp();
-  } catch (err) {
-    if (err.name !== 'AbortError') setDbError('Could not create file. Please try again.');
+// ── Data loading ─────────────────────────────────────────────────────────────
+
+async function loadAllData() {
+  profiles = await api('/profiles');
+  activeProfile = profiles.find(p => p.is_active) || profiles[0];
+  if (activeProfile) {
+    await loadTodayEntries();
   }
 }
 
-function initOverlay() {
-  if (!window.showOpenFilePicker) {
-    // Browser doesn't support File System Access API
-    document.querySelector('.db-actions').innerHTML = `
-      <p style="color:#fc8181;font-size:0.9rem">
-        This feature requires <strong>Chrome</strong> or <strong>Edge</strong>.<br>
-        Please open the app in one of those browsers.
-      </p>`;
-    return;
-  }
-  document.getElementById('db-open-btn').addEventListener('click',   pickExistingFile);
-  document.getElementById('db-create-btn').addEventListener('click', createNewFile);
+async function loadTodayEntries() {
+  if (!activeProfile) { todayEntries = []; return; }
+  const date = getSelectedDate();
+  todayEntries = await api(`/entries/${activeProfile.id}?date=${date}`);
 }
 
-// ── Profile management ────────────────────────────────────────────────────────
+// ── Profile management ───────────────────────────────────────────────────────
 
-function getProfileNames()    { return Object.keys(dbData.profiles); }
-function getActiveProfile()   { return dbData.activeProfile; }
+function getProfileNames()  { return profiles.map(p => p.name); }
+function getActiveProfile() { return activeProfile?.name || 'Me'; }
 
-function setActiveProfile(name) {
-  dbData.activeProfile = name;
-  scheduleWrite();
+async function setActiveProfile(name) {
+  const p = profiles.find(pr => pr.name === name);
+  if (!p) return;
+  await api(`/profiles/${p.id}/activate`, { method: 'PUT' });
+  profiles.forEach(pr => pr.is_active = pr.id === p.id);
+  activeProfile = p;
 }
 
-// ── Data layer ────────────────────────────────────────────────────────────────
+// ── Data layer (compatibility helpers matching old API) ──────────────────────
 
 function getToday() {
   const d = new Date();
@@ -198,30 +175,16 @@ function getToday() {
   return `${y}-${m}-${day}`;
 }
 
-function loadData() {
-  const p = dbData.profiles[getActiveProfile()] || { goal: 2000, days: {} };
-  // Migrate older profiles that predate macro/recent/favorites fields
-  if (!p.macroGoals)    p.macroGoals    = { protein: null, carbs: null, fat: null };
-  if (!p.recentFoods)   p.recentFoods   = [];
-  if (!p.favoriteFoods) p.favoriteFoods = [];
-  return p;
-}
-
-function saveData(profileData) {
-  dbData.profiles[getActiveProfile()] = profileData;
-  scheduleWrite();
-}
-
 function getSelectedDate() {
   const input = document.getElementById('log-date-input');
   return input?.value || getToday();
 }
 
 function getTodayEntries() {
-  return loadData().days[getToday()] || [];
+  return todayEntries;
 }
 
-// ── Profile bar UI ────────────────────────────────────────────────────────────
+// ── Profile bar UI ───────────────────────────────────────────────────────────
 
 function renderProfileBar() {
   const names  = getProfileNames();
@@ -240,7 +203,7 @@ function renderProfileBar() {
     if (names.length > 1) {
       const del = document.createElement('button');
       del.className = 'profile-del';
-      del.textContent = '×';
+      del.textContent = '\u00d7';
       del.title = `Delete "${name}"`;
       del.addEventListener('click', e => { e.stopPropagation(); deleteProfile(name); });
       tab.appendChild(del);
@@ -258,49 +221,64 @@ function renderProfileBar() {
   bar.appendChild(addBtn);
 }
 
-function switchProfile(name) {
-  setActiveProfile(name);
+async function switchProfile(name) {
+  await setActiveProfile(name);
+  await loadTodayEntries();
   renderProfileBar();
   renderAll();
 }
 
-function addProfile() {
+async function addProfile() {
   const name = window.prompt('Name for new profile:')?.trim();
   if (!name) return;
-  if (dbData.profiles[name]) { alert(`"${name}" already exists.`); return; }
-  dbData.profiles[name] = { goal: 2000, macroGoals: { protein: null, carbs: null, fat: null }, days: {}, planStats: null, recentFoods: [], favoriteFoods: [] };
-  switchProfile(name);
+  if (profiles.some(p => p.name === name)) { alert(`"${name}" already exists.`); return; }
+  try {
+    await api('/profiles', { method: 'POST', body: JSON.stringify({ name }) });
+    await loadAllData();
+    await switchProfile(name);
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
-function deleteProfile(name) {
-  const names = getProfileNames();
-  if (names.length <= 1) return;
+async function deleteProfile(name) {
+  if (profiles.length <= 1) return;
   if (!confirm(`Delete profile "${name}" and all its data? This cannot be undone.`)) return;
-  const idx = names.indexOf(name);
-  delete dbData.profiles[name];
-  const remaining = getProfileNames();
-  const newActive = remaining[Math.min(idx, remaining.length - 1)];
-  scheduleWrite();
-  switchProfile(newActive);
+  const p = profiles.find(pr => pr.name === name);
+  if (!p) return;
+  try {
+    await api(`/profiles/${p.id}`, { method: 'DELETE' });
+    await loadAllData();
+    renderProfileBar();
+    renderAll();
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
-// ── Goal & progress bar ───────────────────────────────────────────────────────
+// ── Goal & progress bar ─────────────────────────────────────────────────────
 
-function setGoal() {
+async function setGoal() {
   const input = document.getElementById('goal-input');
   const val   = parseInt(input.value, 10);
   if (!val || val < 1) return;
-  const data = loadData();
-  data.goal  = val;
-  saveData(data);
+  activeProfile.goal = val;
+  await api(`/profiles/${activeProfile.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      goal: val,
+      protein_goal: activeProfile.protein_goal,
+      carbs_goal: activeProfile.carbs_goal,
+      fat_goal: activeProfile.fat_goal,
+    }),
+  });
   renderProgress();
 }
 
 function renderProgress() {
-  const data    = loadData();
   const entries = getTodayEntries();
   const total   = entries.reduce((sum, e) => sum + e.calories, 0);
-  const goal    = data.goal || 2000;
+  const goal    = activeProfile?.goal || 2000;
   const pct     = Math.min((total / goal) * 100, 100);
 
   const fill = document.getElementById('progress-bar-fill');
@@ -312,7 +290,6 @@ function renderProgress() {
   document.getElementById('progress-label').textContent =
     `${total.toLocaleString()} / ${goal.toLocaleString()} kcal`;
 
-  // Big summary numbers on Overview tab
   const remaining    = goal - total;
   const consumedEl   = document.getElementById('kcal-consumed');
   const remainingEl  = document.getElementById('kcal-remaining');
@@ -327,11 +304,15 @@ function renderProgress() {
   if (goalInput && !goalInput.matches(':focus')) goalInput.value = goal;
 
   // Macro progress bars
-  const mg = data.macroGoals || {};
+  const mg = {
+    protein: activeProfile?.protein_goal,
+    carbs:   activeProfile?.carbs_goal,
+    fat:     activeProfile?.fat_goal,
+  };
   const macroTotals = {
-    protein: Math.round(entries.reduce((s, e) => s + (e.protein || 0), 0) * 10) / 10,
-    carbs:   Math.round(entries.reduce((s, e) => s + (e.carbs   || 0), 0) * 10) / 10,
-    fat:     Math.round(entries.reduce((s, e) => s + (e.fat     || 0), 0) * 10) / 10,
+    protein: Math.round(entries.reduce((s, e) => s + (parseFloat(e.protein) || 0), 0) * 10) / 10,
+    carbs:   Math.round(entries.reduce((s, e) => s + (parseFloat(e.carbs)   || 0), 0) * 10) / 10,
+    fat:     Math.round(entries.reduce((s, e) => s + (parseFloat(e.fat)     || 0), 0) * 10) / 10,
   };
   ['protein', 'carbs', 'fat'].forEach(macro => {
     const barEl   = document.getElementById(`${macro}-bar-fill`);
@@ -354,13 +335,22 @@ function renderProgress() {
 }
 
 function initMacroGoals() {
-  document.getElementById('macro-save-btn').addEventListener('click', () => {
-    const data = loadData();
+  document.getElementById('macro-save-btn').addEventListener('click', async () => {
     const p = parseFloat(document.getElementById('macro-protein-input').value);
     const c = parseFloat(document.getElementById('macro-carbs-input').value);
     const f = parseFloat(document.getElementById('macro-fat-input').value);
-    data.macroGoals = { protein: isNaN(p) ? null : p, carbs: isNaN(c) ? null : c, fat: isNaN(f) ? null : f };
-    saveData(data);
+    activeProfile.protein_goal = isNaN(p) ? null : p;
+    activeProfile.carbs_goal   = isNaN(c) ? null : c;
+    activeProfile.fat_goal     = isNaN(f) ? null : f;
+    await api(`/profiles/${activeProfile.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        goal: activeProfile.goal,
+        protein_goal: activeProfile.protein_goal,
+        carbs_goal: activeProfile.carbs_goal,
+        fat_goal: activeProfile.fat_goal,
+      }),
+    });
     renderProgress();
     const btn = document.getElementById('macro-save-btn');
     btn.textContent = 'Saved!';
@@ -369,13 +359,12 @@ function initMacroGoals() {
 }
 
 function restoreMacroGoals() {
-  const mg = loadData().macroGoals || {};
   const pi = document.getElementById('macro-protein-input');
   const ci = document.getElementById('macro-carbs-input');
   const fi = document.getElementById('macro-fat-input');
-  if (pi && !pi.matches(':focus')) pi.value = mg.protein ?? '';
-  if (ci && !ci.matches(':focus')) ci.value = mg.carbs   ?? '';
-  if (fi && !fi.matches(':focus')) fi.value = mg.fat     ?? '';
+  if (pi && !pi.matches(':focus')) pi.value = activeProfile?.protein_goal ?? '';
+  if (ci && !ci.matches(':focus')) ci.value = activeProfile?.carbs_goal   ?? '';
+  if (fi && !fi.matches(':focus')) fi.value = activeProfile?.fat_goal     ?? '';
 }
 
 // ── Local food database (always-available fallback) ───────────────────────────
@@ -853,7 +842,7 @@ const LOCAL_DB = [
   { name: 'Garlic bread',                    kcalPer100g: 350 },
   { name: 'Onion rings, fried',              kcalPer100g: 311 },
   { name: 'Mozzarella sticks, fried',        kcalPer100g: 298 },
-  { name: 'Jalapeño poppers',                kcalPer100g: 267 },
+  { name: 'Jalape\u00f1o poppers',                kcalPer100g: 267 },
   { name: 'Spinach artichoke dip',           kcalPer100g: 180 },
 ].map(f => ({ ...f, brand: 'Built-in' }));
 
@@ -882,17 +871,15 @@ async function fetchJSON(url, timeoutMs) {
   try {
     return await fetchDirect(url, timeoutMs);
   } catch (err) {
-    // Rate limited — proxy won't help, the API itself is rejecting us
     if (err.message === 'HTTP 429') throw err;
-    // Otherwise retry through CORS proxy (fixes file:// origin issues)
-    console.warn(`Direct fetch failed (${err.message}) — retrying via proxy`);
+    console.warn(`Direct fetch failed (${err.message}) \u2014 retrying via proxy`);
     return await fetchDirect(`https://corsproxy.io/?${encodeURIComponent(url)}`, 9000);
   }
 }
 
 async function searchUSDA(query) {
   const params = new URLSearchParams({
-    query, dataType: 'SR Legacy,Survey (FNDDS),Branded', pageSize: 10, api_key: dbData.usdaApiKey || 'DEMO_KEY',
+    query, dataType: 'SR Legacy,Survey (FNDDS),Branded', pageSize: 10, api_key: usdaApiKey || 'DEMO_KEY',
   });
   try {
     const json = await fetchJSON(`https://api.nal.usda.gov/fdc/v1/foods/search?${params}`, 7000);
@@ -953,7 +940,7 @@ let searchCount = 0;
 
 function setSearchStatus(dbName, isFallback) {
   const el = document.getElementById('search-status');
-  el.innerHTML = `Search #${searchCount} · <span class="status-db${isFallback ? ' fallback' : ''}">${dbName}</span>`;
+  el.innerHTML = `Search #${searchCount} \u00b7 <span class="status-db${isFallback ? ' fallback' : ''}">${dbName}</span>`;
 }
 
 async function searchFood() {
@@ -963,9 +950,8 @@ async function searchFood() {
   searchCount++;
   const resultsList = document.getElementById('search-results');
   document.getElementById('search-status').textContent = '';
-  resultsList.innerHTML = '<li style="color:#a0aec0;font-style:italic">Searching…</li>';
+  resultsList.innerHTML = '<li style="color:#a0aec0;font-style:italic">Searching\u2026</li>';
 
-  // Race both APIs in parallel — take whichever responds first
   const winner = await Promise.any([
     searchUSDA(query).then(r => ({ results: r, source: 'USDA FoodData Central', fallback: false })),
     searchOpenFoodFacts(query).then(r => ({ results: r, source: 'Open Food Facts', fallback: true })),
@@ -977,7 +963,6 @@ async function searchFood() {
     return;
   }
 
-  // Both APIs failed — use built-in local database
   const local = searchLocalDB(query);
   setSearchStatus('Built-in database', true);
   displaySearchResults(local);
@@ -992,23 +977,22 @@ function displaySearchResults(results) {
     return;
   }
 
-  const favs = loadData().favoriteFoods;
   results.forEach(food => {
     const { name, brand, kcalPer100g, protein, carbs, fat } = food;
-    const isFav     = favs.some(f => f.name === name);
+    const isFav     = cachedFavorites.some(f => f.name === name);
     const hasMacros = protein != null || carbs != null || fat != null;
     const macroStr  = hasMacros
-      ? ` · <span class="result-macros">P ${protein ?? '--'}g · C ${carbs ?? '--'}g · F ${fat ?? '--'}g</span>`
+      ? ` \u00b7 <span class="result-macros">P ${protein ?? '--'}g \u00b7 C ${carbs ?? '--'}g \u00b7 F ${fat ?? '--'}g</span>`
       : '';
 
     const li = document.createElement('li');
     li.innerHTML = `
       <div class="result-info">
         <div class="result-name">${escapeHtml(name)}</div>
-        <div class="result-meta">${escapeHtml(brand)} · ${kcalPer100g} kcal/100g${macroStr}</div>
+        <div class="result-meta">${escapeHtml(brand)} \u00b7 ${kcalPer100g} kcal/100g${macroStr}</div>
       </div>
       <div class="result-actions">
-        <button class="fav-btn" title="${isFav ? 'Unfavorite' : 'Favorite'}">${isFav ? '★' : '☆'}</button>
+        <button class="fav-btn" title="${isFav ? 'Unfavorite' : 'Favorite'}">${isFav ? '\u2605' : '\u2606'}</button>
         <button class="add-result-btn">Add</button>
       </div>
     `;
@@ -1021,7 +1005,7 @@ function displaySearchResults(results) {
   });
 }
 
-function addFoodFromSearch(food) {
+async function addFoodFromSearch(food) {
   const { name, kcalPer100g, protein, carbs, fat } = food;
   const gramsStr = window.prompt(
     `How many grams of "${name}" did you eat?\n(${kcalPer100g} kcal per 100g)`
@@ -1030,7 +1014,7 @@ function addFoodFromSearch(food) {
   const grams = parseFloat(gramsStr);
   if (!grams || grams <= 0) { alert('Please enter a valid number of grams.'); return; }
   const scale = v => v != null ? Math.round((grams / 100) * v * 10) / 10 : null;
-  addEntry(`${name} (${grams}g)`, Math.round((grams / 100) * kcalPer100g), {
+  await addEntry(`${name} (${grams}g)`, Math.round((grams / 100) * kcalPer100g), {
     protein: scale(protein), carbs: scale(carbs), fat: scale(fat),
   });
   trackRecentFood(food);
@@ -1039,25 +1023,32 @@ function addFoodFromSearch(food) {
   renderRecentFavorites();
 }
 
-// ── Log management ────────────────────────────────────────────────────────────
+// ── Log management ───────────────────────────────────────────────────────────
 
-function addEntry(name, calories, macros = {}) {
+async function addEntry(name, calories, macros = {}) {
+  if (!activeProfile) return;
   const now  = new Date();
   const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  const data = loadData();
   const date = getSelectedDate();
-  if (!data.days[date]) data.days[date] = [];
-  data.days[date].push({
-    id: Date.now(), time, name, calories,
-    protein: macros.protein ?? null,
-    carbs:   macros.carbs   ?? null,
-    fat:     macros.fat     ?? null,
+
+  const entry = await api(`/entries/${activeProfile.id}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      entry_date: date,
+      entry_time: time,
+      name,
+      calories,
+      protein: macros.protein ?? null,
+      carbs:   macros.carbs   ?? null,
+      fat:     macros.fat     ?? null,
+    }),
   });
-  saveData(data);
+
+  todayEntries.push(entry);
   renderLog(); renderProgress(); renderHistory(); renderChart();
 }
 
-function addManualEntry() {
+async function addManualEntry() {
   const nameInput = document.getElementById('manual-name');
   const calInput  = document.getElementById('manual-calories');
   const errEl     = document.getElementById('manual-error');
@@ -1073,7 +1064,7 @@ function addManualEntry() {
   const cVal = parseFloat(document.getElementById('manual-carbs').value);
   const fVal = parseFloat(document.getElementById('manual-fat').value);
 
-  addEntry(name, calories, {
+  await addEntry(name, calories, {
     protein: isNaN(pVal) ? null : pVal,
     carbs:   isNaN(cVal) ? null : cVal,
     fat:     isNaN(fVal) ? null : fVal,
@@ -1085,14 +1076,10 @@ function addManualEntry() {
   document.getElementById('manual-fat').value     = '';
 }
 
-function deleteEntry(id) {
-  const data  = loadData();
-  const today = getToday();
-  if (data.days[today]) {
-    data.days[today] = data.days[today].filter(e => e.id !== id);
-    if (!data.days[today].length) delete data.days[today];
-  }
-  saveData(data);
+async function deleteEntry(id) {
+  if (!activeProfile) return;
+  await api(`/entries/${activeProfile.id}/${id}`, { method: 'DELETE' });
+  todayEntries = todayEntries.filter(e => e.id !== id);
   renderLog(); renderProgress(); renderHistory(); renderChart();
 }
 
@@ -1110,14 +1097,14 @@ function renderLog() {
   entries.forEach(entry => {
     const hasMacros  = entry.protein != null || entry.carbs != null || entry.fat != null;
     const macroLine  = hasMacros
-      ? `<div class="entry-macros">P: ${entry.protein ?? '--'}g · C: ${entry.carbs ?? '--'}g · F: ${entry.fat ?? '--'}g</div>`
+      ? `<div class="entry-macros">P: ${entry.protein ?? '--'}g \u00b7 C: ${entry.carbs ?? '--'}g \u00b7 F: ${entry.fat ?? '--'}g</div>`
       : '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td class="col-time">${escapeHtml(entry.time)}</td>
+      <td class="col-time">${escapeHtml(entry.entry_time || entry.time || '')}</td>
       <td><div>${escapeHtml(entry.name)}</div>${macroLine}</td>
       <td class="col-kcal">${entry.calories.toLocaleString()}</td>
-      <td class="col-del"><button class="delete-btn" title="Remove">×</button></td>
+      <td class="col-del"><button class="delete-btn" title="Remove">\u00d7</button></td>
     `;
     tr.querySelector('.delete-btn').addEventListener('click', () => deleteEntry(entry.id));
     tbody.appendChild(tr);
@@ -1127,7 +1114,7 @@ function renderLog() {
   document.getElementById('daily-total').textContent = `Total: ${total.toLocaleString()} kcal`;
 }
 
-// ── History & chart ───────────────────────────────────────────────────────────
+// ── History & chart ──────────────────────────────────────────────────────────
 
 let chartInstance = null;
 
@@ -1149,14 +1136,31 @@ function formatDate(isoStr) {
   return new Date(+y, +m - 1, +d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+// Cache for history data
+let historyCache = {};
+
+async function loadHistoryData() {
+  if (!activeProfile) return;
+  const days = getLast7Days();
+  const from = days[0];
+  const to   = days[days.length - 1];
+  const entries = await api(`/entries/${activeProfile.id}?from=${from}&to=${to}`);
+  // Group by date
+  historyCache = {};
+  entries.forEach(e => {
+    const d = e.entry_date?.split('T')[0] || e.entry_date;
+    if (!historyCache[d]) historyCache[d] = [];
+    historyCache[d].push(e);
+  });
+}
+
 function renderHistory() {
-  const data = loadData();
-  const goal = data.goal || 2000;
+  const goal = activeProfile?.goal || 2000;
   const list = document.getElementById('history-list');
   list.innerHTML = '';
 
   [...getLast7Days()].reverse().forEach(dateKey => {
-    const entries = data.days[dateKey] || [];
+    const entries = historyCache[dateKey] || [];
     if (!entries.length) return;
     const total  = entries.reduce((sum, e) => sum + e.calories, 0);
     const isOver = total > goal;
@@ -1170,16 +1174,15 @@ function renderHistory() {
   });
 
   if (!list.children.length) {
-    list.innerHTML = '<li style="color:#a0aec0;font-style:italic;padding:12px 0">No history yet — start logging meals!</li>';
+    list.innerHTML = '<li style="color:#a0aec0;font-style:italic;padding:12px 0">No history yet \u2014 start logging meals!</li>';
   }
 }
 
 function renderChart() {
-  const data = loadData();
   const days = getLast7Days();
-  const goal = data.goal || 2000;
+  const goal = activeProfile?.goal || 2000;
   const labels       = days.map(formatDate);
-  const caloriesData = days.map(d => (data.days[d] || []).reduce((s, e) => s + e.calories, 0));
+  const caloriesData = days.map(d => (historyCache[d] || []).reduce((s, e) => s + e.calories, 0));
   const goalData     = days.map(() => goal);
 
   if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
@@ -1214,9 +1217,10 @@ function renderChart() {
   });
 }
 
-// ── Cutting & Bulking Plans ───────────────────────────────────────────────────
+// ── Cutting & Bulking Plans ─────────────────────────────────────────────────
 
 let selectedSex = 'male';
+let cachedPlanStats = null;
 
 function initPlanSection() {
   document.querySelectorAll('#plan-section .seg-btn').forEach(btn => {
@@ -1229,7 +1233,7 @@ function initPlanSection() {
   document.getElementById('calc-plan-btn').addEventListener('click', calculatePlan);
 }
 
-function restorePlanSection() {
+async function restorePlanSection() {
   selectedSex = 'male';
   document.querySelectorAll('#plan-section .seg-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.val === 'male');
@@ -1242,23 +1246,27 @@ function restorePlanSection() {
   document.getElementById('plan-error').textContent = '';
   document.getElementById('plan-results').classList.add('hidden');
 
-  const s = loadData().planStats;
-  if (!s) return;
-  if (s.sex) {
-    selectedSex = s.sex;
-    document.querySelectorAll('#plan-section .seg-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.val === s.sex);
-    });
-  }
-  if (s.age)            document.getElementById('plan-age').value       = s.age;
-  if (s.ft)             document.getElementById('plan-height-ft').value = s.ft;
-  if (s.inches != null) document.getElementById('plan-height-in').value = s.inches;
-  if (s.lbs)            document.getElementById('plan-weight').value    = s.lbs;
-  if (s.activity)       document.getElementById('plan-activity').value  = s.activity;
-  calculatePlan();
+  if (!activeProfile) return;
+  try {
+    const s = await api(`/profiles/${activeProfile.id}/plan-stats`);
+    cachedPlanStats = s;
+    if (!s) return;
+    if (s.sex) {
+      selectedSex = s.sex;
+      document.querySelectorAll('#plan-section .seg-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.val === s.sex);
+      });
+    }
+    if (s.age)            document.getElementById('plan-age').value       = s.age;
+    if (s.ft)             document.getElementById('plan-height-ft').value = s.ft;
+    if (s.inches != null) document.getElementById('plan-height-in').value = s.inches;
+    if (s.lbs)            document.getElementById('plan-weight').value    = s.lbs;
+    if (s.activity)       document.getElementById('plan-activity').value  = s.activity;
+    calculatePlanUI();
+  } catch { /* no plan stats yet */ }
 }
 
-function calculatePlan() {
+async function calculatePlan() {
   const age      = parseInt(document.getElementById('plan-age').value, 10);
   const ft       = parseInt(document.getElementById('plan-height-ft').value, 10);
   const inches   = parseInt(document.getElementById('plan-height-in').value, 10) || 0;
@@ -1266,10 +1274,32 @@ function calculatePlan() {
   const activity = parseFloat(document.getElementById('plan-activity').value);
   const errEl    = document.getElementById('plan-error');
 
-  if (!age || age < 10 || age > 120)              { errEl.textContent = 'Enter a valid age (10–120).'; return; }
+  if (!age || age < 10 || age > 120)              { errEl.textContent = 'Enter a valid age (10\u2013120).'; return; }
   if (!ft || ft < 1 || inches < 0 || inches > 11) { errEl.textContent = 'Enter a valid height (e.g. 5 ft 10 in).'; return; }
   if (!lbs || lbs < 1)                            { errEl.textContent = 'Enter a valid weight in lbs.'; return; }
   errEl.textContent = '';
+
+  // Save to backend
+  if (activeProfile) {
+    try {
+      await api(`/profiles/${activeProfile.id}/plan-stats`, {
+        method: 'PUT',
+        body: JSON.stringify({ sex: selectedSex, age, ft, inches, lbs, activity }),
+      });
+    } catch { /* non-fatal */ }
+  }
+
+  calculatePlanUI();
+}
+
+function calculatePlanUI() {
+  const age      = parseInt(document.getElementById('plan-age').value, 10);
+  const ft       = parseInt(document.getElementById('plan-height-ft').value, 10);
+  const inches   = parseInt(document.getElementById('plan-height-in').value, 10) || 0;
+  const lbs      = parseFloat(document.getElementById('plan-weight').value);
+  const activity = parseFloat(document.getElementById('plan-activity').value);
+
+  if (!age || !ft || !lbs) return;
 
   const heightCm = (ft * 12 + inches) * 2.54;
   const weightKg = lbs * 0.453592;
@@ -1280,25 +1310,28 @@ function calculatePlan() {
   const cutKcal  = Math.max(tdee - 500, 1200);
   const bulkKcal = tdee + 300;
 
-  const data = loadData();
-  data.planStats = { sex: selectedSex, age, ft, inches, lbs, activity };
-  saveData(data);
-
   document.getElementById('tdee-value').textContent  = tdee.toLocaleString();
   document.getElementById('cut-kcal').textContent    = `${cutKcal.toLocaleString()} kcal/day`;
   document.getElementById('cut-detail').textContent  = cutKcal === 1200
-    ? '1,200 kcal minimum — consult a doctor' : '−500 kcal deficit · ~0.5 kg/week loss';
+    ? '1,200 kcal minimum \u2014 consult a doctor' : '\u2212500 kcal deficit \u00b7 ~0.5 kg/week loss';
   document.getElementById('bulk-kcal').textContent   = `${bulkKcal.toLocaleString()} kcal/day`;
-  document.getElementById('bulk-detail').textContent = '+300 kcal surplus · ~0.3 kg/week gain';
+  document.getElementById('bulk-detail').textContent = '+300 kcal surplus \u00b7 ~0.3 kg/week gain';
   document.getElementById('cut-apply-btn').onclick   = () => applyPlanGoal(cutKcal,  'cut');
   document.getElementById('bulk-apply-btn').onclick  = () => applyPlanGoal(bulkKcal, 'bulk');
   document.getElementById('plan-results').classList.remove('hidden');
 }
 
-function applyPlanGoal(calories, type) {
-  const data = loadData();
-  data.goal  = calories;
-  saveData(data);
+async function applyPlanGoal(calories, type) {
+  activeProfile.goal = calories;
+  await api(`/profiles/${activeProfile.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      goal: calories,
+      protein_goal: activeProfile.protein_goal,
+      carbs_goal: activeProfile.carbs_goal,
+      fat_goal: activeProfile.fat_goal,
+    }),
+  });
   renderProgress();
   const btn = document.getElementById(type + '-apply-btn');
   btn.textContent = 'Goal Applied!';
@@ -1307,25 +1340,55 @@ function applyPlanGoal(calories, type) {
   restoreMacroGoals();
 }
 
-// ── Recent foods & Favorites ──────────────────────────────────────────────────
+// ── Recent foods & Favorites ─────────────────────────────────────────────────
 
-function trackRecentFood(food) {
-  const data = loadData();
-  data.recentFoods = data.recentFoods.filter(f => f.name !== food.name);
-  data.recentFoods.unshift({ name: food.name, brand: food.brand || '', kcalPer100g: food.kcalPer100g, protein: food.protein ?? null, carbs: food.carbs ?? null, fat: food.fat ?? null });
-  data.recentFoods = data.recentFoods.slice(0, 10);
-  saveData(data);
+let cachedRecentFoods   = [];
+let cachedFavorites     = [];
+
+async function loadRecentAndFavorites() {
+  if (!activeProfile) return;
+  try {
+    [cachedRecentFoods, cachedFavorites] = await Promise.all([
+      api(`/foods/${activeProfile.id}/recent`),
+      api(`/foods/${activeProfile.id}/favorites`),
+    ]);
+  } catch { /* non-fatal */ }
 }
 
-function toggleFavorite(food) {
-  const data = loadData();
-  const idx  = data.favoriteFoods.findIndex(f => f.name === food.name);
-  if (idx >= 0) {
-    data.favoriteFoods.splice(idx, 1);
-  } else {
-    data.favoriteFoods.push({ name: food.name, brand: food.brand || '', kcalPer100g: food.kcalPer100g, protein: food.protein ?? null, carbs: food.carbs ?? null, fat: food.fat ?? null });
-  }
-  saveData(data);
+async function trackRecentFood(food) {
+  if (!activeProfile) return;
+  try {
+    await api(`/foods/${activeProfile.id}/recent`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: food.name,
+        brand: food.brand || 'Built-in',
+        kcal_per_100g: food.kcalPer100g,
+        protein: food.protein ?? null,
+        carbs: food.carbs ?? null,
+        fat: food.fat ?? null,
+      }),
+    });
+    await loadRecentAndFavorites();
+  } catch { /* non-fatal */ }
+}
+
+async function toggleFavorite(food) {
+  if (!activeProfile) return;
+  try {
+    await api(`/foods/${activeProfile.id}/favorites`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: food.name,
+        brand: food.brand || 'Built-in',
+        kcal_per_100g: food.kcalPer100g,
+        protein: food.protein ?? null,
+        carbs: food.carbs ?? null,
+        fat: food.fat ?? null,
+      }),
+    });
+    await loadRecentAndFavorites();
+  } catch { /* non-fatal */ }
 }
 
 function renderQuickList(container, foods, emptyMsg) {
@@ -1334,29 +1397,29 @@ function renderQuickList(container, foods, emptyMsg) {
     container.innerHTML = `<li class="quick-empty">${emptyMsg}</li>`;
     return;
   }
-  const favs = loadData().favoriteFoods;
   foods.forEach(food => {
-    const isFav = favs.some(f => f.name === food.name);
+    const isFav = cachedFavorites.some(f => f.name === food.name);
+    const kcal  = food.kcal_per_100g || food.kcalPer100g || 0;
     const li = document.createElement('li');
     li.className = 'quick-food-item';
     li.innerHTML = `
       <div class="quick-info">
         <span class="quick-name">${escapeHtml(food.name)}</span>
-        <span class="quick-meta">${food.kcalPer100g} kcal/100g</span>
+        <span class="quick-meta">${kcal} kcal/100g</span>
       </div>
-      <button class="fav-btn" title="${isFav ? 'Unfavorite' : 'Favorite'}">${isFav ? '★' : '☆'}</button>
+      <button class="fav-btn" title="${isFav ? 'Unfavorite' : 'Favorite'}">${isFav ? '\u2605' : '\u2606'}</button>
       <button class="quick-add-btn">Add</button>
     `;
-    li.querySelector('.quick-add-btn').addEventListener('click', () => addFoodFromSearch(food));
-    li.querySelector('.fav-btn').addEventListener('click', () => { toggleFavorite(food); renderRecentFavorites(); });
+    const searchFood = { name: food.name, brand: food.brand || '', kcalPer100g: kcal, protein: food.protein, carbs: food.carbs, fat: food.fat };
+    li.querySelector('.quick-add-btn').addEventListener('click', () => addFoodFromSearch(searchFood));
+    li.querySelector('.fav-btn').addEventListener('click', async () => { await toggleFavorite(searchFood); renderRecentFavorites(); });
     container.appendChild(li);
   });
 }
 
 function renderRecentFavorites() {
-  const data = loadData();
-  renderQuickList(document.getElementById('recent-list'),  data.recentFoods,   'No recent foods yet — start logging!');
-  renderQuickList(document.getElementById('fav-list'),     data.favoriteFoods, 'No favorites yet — star a food from search results.');
+  renderQuickList(document.getElementById('recent-list'),  cachedRecentFoods,  'No recent foods yet \u2014 start logging!');
+  renderQuickList(document.getElementById('fav-list'),     cachedFavorites,    'No favorites yet \u2014 star a food from search results.');
 }
 
 function initQuickFoods() {
@@ -1365,15 +1428,13 @@ function initQuickFoods() {
     const list = document.getElementById(`${key}-list`);
     btn.addEventListener('click', () => {
       const hidden = list.classList.toggle('hidden');
-      btn.querySelector('.toggle-arrow').textContent = hidden ? '▶' : '▼';
+      btn.querySelector('.toggle-arrow').textContent = hidden ? '\u25b6' : '\u25bc';
     });
   });
   renderRecentFavorites();
 }
 
-// ── Render all (used when switching profiles) ─────────────────────────────────
-
-// ── Tab navigation ────────────────────────────────────────────────────────────
+// ── Tab navigation ───────────────────────────────────────────────────────────
 
 function switchTab(tabId) {
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
@@ -1390,9 +1451,13 @@ function initTabs() {
   });
 }
 
-// ── Render all (used when switching profiles) ─────────────────────────────────
+// ── Render all (used when switching profiles) ────────────────────────────────
 
-function renderAll() {
+async function renderAll() {
+  await Promise.all([loadHistoryData(), loadRecentAndFavorites()]);
+  // Also put today's entries in history cache
+  const today = getToday();
+  historyCache[today] = todayEntries;
   restorePlanSection();
   restoreMacroGoals();
   renderLog();
@@ -1404,7 +1469,7 @@ function renderAll() {
   document.getElementById('search-input').value = '';
 }
 
-// ── Utility ───────────────────────────────────────────────────────────────────
+// ── Utility ──────────────────────────────────────────────────────────────────
 
 function escapeHtml(str) {
   return String(str)
@@ -1412,7 +1477,7 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ── API key settings ──────────────────────────────────────────────────────────
+// ── API key settings ─────────────────────────────────────────────────────────
 
 function initApiKeySection() {
   const toggle   = document.getElementById('api-key-toggle');
@@ -1421,29 +1486,28 @@ function initApiKeySection() {
   const saveBtn  = document.getElementById('api-key-save-btn');
 
   function updateToggleLabel() {
-    toggle.textContent = dbData.usdaApiKey ? '⚙ USDA API Key ✓' : '⚙ USDA API Key';
-    toggle.style.color = dbData.usdaApiKey ? '#48bb78' : '';
+    toggle.textContent = usdaApiKey ? '\u2699 USDA API Key \u2713' : '\u2699 USDA API Key';
+    toggle.style.color = usdaApiKey ? '#48bb78' : '';
   }
   updateToggleLabel();
 
   toggle.addEventListener('click', () => {
     const hidden = form.classList.toggle('hidden');
-    if (!hidden && dbData.usdaApiKey) input.value = dbData.usdaApiKey;
+    if (!hidden && usdaApiKey) input.value = usdaApiKey;
   });
 
   saveBtn.addEventListener('click', () => {
     const key = input.value.trim();
-    dbData.usdaApiKey = key || null;
-    scheduleWrite();
+    usdaApiKey = key || null;
     updateToggleLabel();
     form.classList.add('hidden');
     input.value = '';
   });
 }
 
-// ── App init (called after database file is loaded) ───────────────────────────
+// ── App init (called after login) ────────────────────────────────────────────
 
-function initApp() {
+async function initApp() {
   document.getElementById('current-date').textContent =
     new Date().toLocaleDateString('en-US', {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -1455,12 +1519,20 @@ function initApp() {
     logDateInput.value = getToday();
   });
 
+  // Reload entries when date changes
+  logDateInput.addEventListener('change', async () => {
+    await loadTodayEntries();
+    renderLog();
+    renderProgress();
+  });
+
   document.getElementById('set-goal-btn').addEventListener('click', setGoal);
   document.getElementById('goal-input').addEventListener('keydown', e => { if (e.key === 'Enter') setGoal(); });
   document.getElementById('search-btn').addEventListener('click', searchFood);
   document.getElementById('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') searchFood(); });
   document.getElementById('add-manual-btn').addEventListener('click', addManualEntry);
   document.getElementById('manual-calories').addEventListener('keydown', e => { if (e.key === 'Enter') addManualEntry(); });
+  document.getElementById('logout-btn').addEventListener('click', logout);
 
   initTabs();
   initPlanSection();
@@ -1468,19 +1540,19 @@ function initApp() {
   initMacroGoals();
   initQuickFoods();
   renderProfileBar();
-  renderAll();
+  await renderAll();
 }
 
-// ── Bootstrap ─────────────────────────────────────────────────────────────────
+// ── Bootstrap ────────────────────────────────────────────────────────────────
 
 window.addEventListener('load', async () => {
-  initOverlay();
+  initAuth();
   showOverlay();
 
-  // Try to restore the previously used file handle
-  const restored = await tryRestoreSavedHandle();
+  const restored = await tryAutoLogin();
   if (restored) {
     hideOverlay();
+    await loadAllData();
     initApp();
   }
 });

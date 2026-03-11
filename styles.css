@@ -693,6 +693,34 @@ button:active { background: #4c51bf; }
   margin-top: 16px;
 }
 
+/* Auth inputs */
+.auth-input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  margin-bottom: 8px;
+  background: #fff;
+  color: #2d3748;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.auth-input:focus { border-color: #667eea; }
+
+/* Logout button */
+.logout-btn {
+  background: transparent;
+  color: #718096;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.logout-btn:hover { background: #fed7d7; color: #c53030; border-color: #feb2b2; }
+
 /* App hidden until DB loaded */
 #app.hidden { display: none; }
 

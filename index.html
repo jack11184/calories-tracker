@@ -8,31 +8,36 @@
 </head>
 <body>
 
-  <!-- Database file picker overlay -->
+  <!-- Auth overlay (login / register) -->
   <div id="db-overlay">
     <div id="db-modal">
       <div class="db-logo">🥗</div>
       <h2>My Calorie Tracker</h2>
-      <p class="db-subtitle">Your data is saved to a <strong>.json</strong> file on your computer that you choose.</p>
+      <p class="db-subtitle">Sign in to track your calories from <strong>any device</strong>.</p>
 
-      <div class="db-actions">
-        <button id="db-create-btn" class="db-btn-create">Create new database</button>
-        <button id="db-open-btn" class="db-btn-open">Open database file</button>
-      </div>
-
-      <div id="db-restore" class="hidden">
-        <button id="db-restore-btn" class="db-btn-restore">
-          Continue with "<span id="db-filename"></span>"
-        </button>
+      <div class="db-actions" id="auth-forms">
+        <div id="auth-login-form">
+          <input id="auth-username" type="text" placeholder="Username" autocomplete="username" class="auth-input">
+          <input id="auth-password" type="password" placeholder="Password" autocomplete="current-password" class="auth-input">
+          <button id="auth-login-btn" class="db-btn-create">Log In</button>
+          <button id="auth-show-register" class="db-btn-open">Create Account</button>
+        </div>
+        <div id="auth-register-form" class="hidden" style="display:none">
+          <input id="reg-username" type="text" placeholder="Choose a username" autocomplete="username" class="auth-input">
+          <input id="reg-password" type="password" placeholder="Password (min 6 chars)" autocomplete="new-password" class="auth-input">
+          <input id="reg-password2" type="password" placeholder="Confirm password" autocomplete="new-password" class="auth-input">
+          <button id="auth-register-btn" class="db-btn-create">Register</button>
+          <button id="auth-show-login" class="db-btn-open">Back to Login</button>
+        </div>
       </div>
 
       <p id="db-error" class="db-error"></p>
-      <p class="db-hint">Requires Chrome or Edge · Your file never leaves your device</p>
+      <p class="db-hint">Your data is stored securely in the cloud</p>
     </div>
   </div>
 
   <!-- Main app (hidden until database is loaded) -->
-  <div id="app" class="hidden">
+  <div id="app" class="hidden" style="display:none">
 
     <!-- Sticky top bar: profiles + title + tab nav -->
     <div id="top-bar">
@@ -41,6 +46,7 @@
         <div id="app-bar">
           <span class="app-name">🥗 Calorie Tracker</span>
           <span id="current-date"></span>
+          <button id="logout-btn" class="logout-btn" title="Log out">Logout</button>
         </div>
         <nav id="tab-bar">
           <button class="tab-btn active" data-tab="overview">Overview</button>
