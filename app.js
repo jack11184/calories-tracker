@@ -1005,8 +1005,14 @@ function hasSecureCameraContext() {
 
 async function startBarcodeScanZXing() {
   const ZXingBrowser = window.ZXingBrowser;
+
+  const showPhotoFallback = () => {
+    document.getElementById('barcode-photo-fallback')?.classList.remove('hidden');
+  };
+
   if (!ZXingBrowser?.BrowserMultiFormatReader) {
-    setBarcodeStatus('Scanner library failed to load. Enter UPC/EAN manually.', true);
+    setBarcodeStatus('Live scan unavailable. Use \"Scan from Photo\" below.', true);
+    showPhotoFallback();
     return;
   }
 
@@ -1015,33 +1021,77 @@ async function startBarcodeScanZXing() {
   if (!video || !wrap) return;
 
   stopBarcodeScan();
-  setBarcodeStatus('Starting camera scanner...');
+  setBarcodeStatus('Starting camera...');
 
-  try {
-    barcodeZXingReader = new ZXingBrowser.BrowserMultiFormatReader();
-    wrap.classList.remove('hidden');
+  // Try rear camera strictly, then preferred, then any — gives best mobile compatibility.
+  const constraintOptions = [
+    { video: { facingMode: { exact: 'environment' } } },
+    { video: { facingMode: 'environment' } },
+    { video: true },
+  ];
 
-    let resolved = false;
-    await barcodeZXingReader.decodeFromVideoDevice(undefined, video, async (result, err) => {
-      if (resolved) return;
-      if (result?.getText) {
-        const value = sanitizeBarcode(result.getText());
-        if (!value) return;
-        resolved = true;
-        document.getElementById('barcode-input').value = value;
-        stopBarcodeScan();
-        await lookupBarcode(value);
-        return;
+  let started = false;
+  for (const constraints of constraintOptions) {
+    try {
+      barcodeZXingReader = new ZXingBrowser.BrowserMultiFormatReader();
+      let resolved = false;
+
+      await barcodeZXingReader.decodeFromConstraints(constraints, video, async (result, err) => {
+        if (resolved) return;
+        if (result) {
+          const value = sanitizeBarcode(result.getText());
+          if (!value) return;
+          resolved = true;
+          document.getElementById('barcode-input').value = value;
+          stopBarcodeScan();
+          await lookupBarcode(value);
+          return;
+        }
+        // Filter out constant "no barcode in frame" noise.
+        if (err && (
+          String(err.message || '').toLowerCase().includes('no multiformat') ||
+          String(err.name   || '').toLowerCase().includes('notfound')
+        )) return;
+      });
+
+      wrap.classList.remove('hidden');
+      setBarcodeStatus('Point the rear camera at a barcode...');
+      started = true;
+      break;
+    } catch {
+      if (barcodeZXingReader) {
+        try { barcodeZXingReader.reset(); } catch { /* noop */ }
+        barcodeZXingReader = null;
       }
+    }
+  }
 
-      // Ignore routine "not found in frame" signals.
-      if (err && String(err.name || '').toLowerCase().includes('notfound')) return;
-    });
+  if (!started) {
+    setBarcodeStatus('Live scan failed. Use \"Scan from Photo\" below.', true);
+    showPhotoFallback();
+  }
+}
 
-    setBarcodeStatus('Point your camera at a barcode...');
+async function handleBarcodePhoto(file) {
+  if (!file) return;
+  const ZXingBrowser = window.ZXingBrowser;
+  if (!ZXingBrowser?.BrowserMultiFormatReader) {
+    setBarcodeStatus('Cannot decode photo — library unavailable. Enter UPC manually.', true);
+    return;
+  }
+  setBarcodeStatus('Reading barcode from photo...');
+  const url = URL.createObjectURL(file);
+  try {
+    const reader = new ZXingBrowser.BrowserMultiFormatReader();
+    const result = await reader.decodeFromImageUrl(url);
+    const value = sanitizeBarcode(result.getText());
+    if (!value) throw new Error('empty');
+    document.getElementById('barcode-input').value = value;
+    await lookupBarcode(value);
   } catch {
-    setBarcodeStatus('Unable to access camera. Allow permission and try again.', true);
-    stopBarcodeScan();
+    setBarcodeStatus('No barcode found in photo. Try again or enter UPC manually.', true);
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -1108,12 +1158,17 @@ async function startBarcodeScan() {
 }
 
 function initBarcodeSection() {
-  const scanBtn = document.getElementById('scan-barcode-btn');
+  const scanBtn   = document.getElementById('scan-barcode-btn');
   const lookupBtn = document.getElementById('barcode-lookup-btn');
-  const stopBtn = document.getElementById('stop-scan-btn');
-  const input = document.getElementById('barcode-input');
+  const stopBtn   = document.getElementById('stop-scan-btn');
+  const input     = document.getElementById('barcode-input');
+  const photoInput = document.getElementById('barcode-photo-input');
 
-  scanBtn.addEventListener('click', startBarcodeScan);
+  scanBtn.addEventListener('click', () => {
+    // Hide photo fallback whenever starting a fresh live scan.
+    document.getElementById('barcode-photo-fallback')?.classList.add('hidden');
+    startBarcodeScan();
+  });
   stopBtn.addEventListener('click', () => {
     stopBarcodeScan();
     setBarcodeStatus('Scan stopped.');
@@ -1121,6 +1176,12 @@ function initBarcodeSection() {
   lookupBtn.addEventListener('click', () => lookupBarcode(input.value));
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') lookupBarcode(input.value);
+  });
+  photoInput?.addEventListener('change', e => {
+    const file = e.target.files?.[0];
+    if (file) handleBarcodePhoto(file);
+    // Reset so the same file can be re-selected if needed.
+    e.target.value = '';
   });
 }
 

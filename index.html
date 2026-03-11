@@ -146,9 +146,13 @@
           </div>
           <p id="barcode-status" class="barcode-status"></p>
           <div id="barcode-scanner-wrap" class="hidden">
-            <video id="barcode-video" autoplay muted playsinline></video>
-            <button id="stop-scan-btn" type="button" class="stop-scan-btn">Stop Scan</button>
+            <video id="barcode-video" autoplay muted playsinline webkit-playsinline></video>
+            <button id="stop-scan-btn" type="button" class="stop-scan-btn">&#x25A0; Stop Scan</button>
           </div>
+          <label id="barcode-photo-fallback" class="barcode-photo-label hidden">
+            <span>&#x1F4F7; Scan from Photo</span>
+            <input type="file" accept="image/*" capture="environment" id="barcode-photo-input">
+          </label>
           <ul id="search-results"></ul>
           <p id="search-status"></p>
 

@@ -127,12 +127,16 @@ Firefox/Safari users can still use the app if it's hosted and served over HTTPS 
 
 ## Tech Stack
 
-- Vanilla HTML, CSS, JavaScript — no framework, no build tool
-- [Chart.js](https://www.chartjs.org/) for the history chart
-- [USDA FoodData Central API](https://fdc.nal.usda.gov/) for food search
-- [Open Food Facts API](https://world.openfoodfacts.org/) as secondary search
-- [File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API) for local file storage
-- IndexedDB for persisting the file handle across sessions
+### Frontend
+- **Core:** Vanilla JavaScript (ES6+), HTML5, CSS3
+- **Visualization:** [Chart.js](https://www.chartjs.org/)
+- **Scanning:** ZXing Browser (Barcode detection)
+
+### Backend
+- **Runtime:** Node.js & Express
+- **Database:** PostgreSQL
+- **Auth:** JWT (JSON Web Tokens) & bcryptjs
+- **APIs:** [USDA FoodData Central](https://fdc.nal.usda.gov/), [Open Food Facts](https://world.openfoodfacts.org/)
 
 ---
 
