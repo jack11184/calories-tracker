@@ -5,6 +5,7 @@ const API_BASE = (location.hostname === 'localhost' || location.hostname === '12
   : '/api';
 
 let authToken = localStorage.getItem('ct_token');
+let captchaToken = null;
 
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
@@ -48,7 +49,10 @@ function initAuth() {
     loginForm.style.display = 'none';
     registerForm.style.display = 'block';
     setDbError('');
+    fetchCaptcha();
   });
+
+  document.getElementById('captcha-refresh-btn').addEventListener('click', fetchCaptcha);
   document.getElementById('auth-show-login').addEventListener('click', () => {
     registerForm.style.display = 'none';
     loginForm.style.display = 'block';
@@ -87,24 +91,37 @@ async function doLogin() {
   }
 }
 
+async function fetchCaptcha() {
+  try {
+    const data = await fetch(`${API_BASE}/auth/captcha`).then(r => r.json());
+    captchaToken = data.token;
+    document.getElementById('captcha-img').src = data.image;
+    document.getElementById('captcha-answer').value = '';
+  } catch {
+    // silently ignore — captcha will just be missing
+  }
+}
+
 async function doRegister() {
   setDbError('');
-  const username  = document.getElementById('reg-username').value.trim();
-  const password  = document.getElementById('reg-password').value;
-  const password2 = document.getElementById('reg-password2').value;
+  const username      = document.getElementById('reg-username').value.trim();
+  const password      = document.getElementById('reg-password').value;
+  const password2     = document.getElementById('reg-password2').value;
+  const captchaAnswer = document.getElementById('captcha-answer').value.trim();
 
   if (!username || !password) { setDbError('Please fill in all fields.'); return; }
   if (password !== password2)  { setDbError('Passwords do not match.'); return; }
   if (password.length < 6)     { setDbError('Password must be at least 6 characters.'); return; }
+  if (!captchaAnswer)          { setDbError('Please complete the CAPTCHA.'); return; }
 
   try {
     const data = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, captchaToken, captchaAnswer }),
     }).then(r => r.json());
 
-    if (data.error) { setDbError(data.error); return; }
+    if (data.error) { setDbError(data.error); fetchCaptcha(); return; }
     authToken = data.token;
     localStorage.setItem('ct_token', authToken);
     hideOverlay();

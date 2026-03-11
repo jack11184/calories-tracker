@@ -6,10 +6,70 @@ const auth = require('../middleware/auth');
 
 const router = express.Router();
 
+// ── CAPTCHA helpers ──────────────────────────────────────────────────────────
+function rnd(max) { return (Math.random() * max).toFixed(1); }
+function randDark() {
+  return `rgb(${Math.floor(Math.random()*110)},${Math.floor(Math.random()*110)},${Math.floor(Math.random()*110)})`;
+}
+function randNoise() {
+  return `rgb(${Math.floor(Math.random()*200)},${Math.floor(Math.random()*200)},${Math.floor(Math.random()*200)})`;
+}
+
+function generateCaptcha() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let text = '';
+  for (let i = 0; i < 6; i++) text += chars[Math.floor(Math.random() * chars.length)];
+
+  const w = 220, h = 72;
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">`;
+  svg += `<rect width="${w}" height="${h}" fill="#efefef" rx="6"/>`;
+
+  // Noise lines
+  for (let i = 0; i < 10; i++) {
+    svg += `<line x1="${rnd(w)}" y1="${rnd(h)}" x2="${rnd(w)}" y2="${rnd(h)}" stroke="${randNoise()}" stroke-width="${(Math.random()*2+0.5).toFixed(1)}"/>`;
+  }
+  // Noise dots
+  for (let i = 0; i < 45; i++) {
+    svg += `<circle cx="${rnd(w)}" cy="${rnd(h)}" r="1.4" fill="${randNoise()}"/>`;
+  }
+  // Characters — each with random position offset, rotation, size, dark color
+  for (let i = 0; i < text.length; i++) {
+    const x = 18 + i * 33;
+    const y = 42 + (Math.random() * 18 - 9);
+    const rot = (Math.random() * 52 - 26).toFixed(1);
+    const size = (24 + Math.random() * 9).toFixed(0);
+    svg += `<text x="${x}" y="${y}" font-size="${size}" font-family="Arial,sans-serif" fill="${randDark()}" transform="rotate(${rot},${x},${y})" font-weight="bold">${text[i]}</text>`;
+  }
+  svg += '</svg>';
+
+  return { text, image: 'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64') };
+}
+
+// GET /api/auth/captcha
+router.get('/captcha', (_req, res) => {
+  const { text, image } = generateCaptcha();
+  const token = jwt.sign({ captcha: text.toLowerCase() }, process.env.JWT_SECRET, { expiresIn: '5m' });
+  res.json({ image, token });
+});
+
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, captchaToken, captchaAnswer } = req.body;
+
+    // Verify CAPTCHA first
+    if (!captchaToken || !captchaAnswer) {
+      return res.status(400).json({ error: 'Please complete the CAPTCHA.' });
+    }
+    try {
+      const decoded = jwt.verify(captchaToken, process.env.JWT_SECRET);
+      if (decoded.captcha !== captchaAnswer.trim().toLowerCase()) {
+        return res.status(400).json({ error: 'Incorrect CAPTCHA. Please try again.' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'CAPTCHA expired. Please refresh and try again.' });
+    }
+
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
     }

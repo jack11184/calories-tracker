@@ -786,6 +786,31 @@ button:active { background: #4c51bf; }
 }
 .auth-input:focus { border-color: #667eea; }
 
+/* CAPTCHA */
+.captcha-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.captcha-img {
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  height: 72px;
+  flex: 1;
+}
+.captcha-refresh-btn {
+  background: #edf2f7;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 20px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: #4a5568;
+  flex-shrink: 0;
+}
+.captcha-refresh-btn:hover { background: #e2e8f0; }
+
 /* Logout button */
 .logout-btn {
   background: transparent;

@@ -26,6 +26,11 @@
           <input id="reg-username" type="text" placeholder="Choose a username" autocomplete="username" class="auth-input">
           <input id="reg-password" type="password" placeholder="Password (min 6 chars)" autocomplete="new-password" class="auth-input">
           <input id="reg-password2" type="password" placeholder="Confirm password" autocomplete="new-password" class="auth-input">
+          <div class="captcha-wrap">
+            <img id="captcha-img" alt="CAPTCHA" class="captcha-img">
+            <button type="button" id="captcha-refresh-btn" class="captcha-refresh-btn" title="Refresh CAPTCHA">&#8635;</button>
+          </div>
+          <input id="captcha-answer" type="text" placeholder="Type the characters above" autocomplete="off" class="auth-input" maxlength="6">
           <button id="auth-register-btn" class="db-btn-create">Register</button>
           <button id="auth-show-login" class="db-btn-open">Back to Login</button>
         </div>
