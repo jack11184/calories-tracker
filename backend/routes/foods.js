@@ -9,6 +9,28 @@ function normalizeBarcode(value = '') {
   return String(value).replace(/[^0-9]/g, '');
 }
 
+function getBarcodeCandidates(rawBarcode) {
+  const code = normalizeBarcode(rawBarcode);
+  if (!code) return [];
+
+  const set = new Set([code]);
+
+  // OFF sometimes stores UPC-A with a leading 0 as EAN-13.
+  if (code.length === 12) set.add(`0${code}`);
+
+  // Hardware/labels occasionally omit leading zeros.
+  if (code.length >= 8 && code.length < 12) {
+    set.add(code.padStart(12, '0'));
+  }
+
+  // Also try EAN-13 representation for short/12-digit values.
+  if (code.length >= 8 && code.length < 13) {
+    set.add(code.padStart(13, '0'));
+  }
+
+  return Array.from(set);
+}
+
 async function fetchWithTimeout(url, timeoutMs = 7000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -114,14 +136,27 @@ router.get('/:profileId/barcode/:barcode', async (req, res) => {
       'brands',
       'nutriments',
     ].join(',');
-    const url = `https://world.openfoodfacts.org/api/v2/product/${barcode}.json?fields=${encodeURIComponent(fields)}`;
-    const json = await fetchWithTimeout(url, 7000);
+    const candidates = getBarcodeCandidates(barcode);
+    let product = null;
+    let matchedBarcode = barcode;
 
-    if (json?.status !== 1 || !json?.product) {
-      return res.status(404).json({ error: 'No product found for that barcode.' });
+    for (const candidate of candidates) {
+      const url = `https://world.openfoodfacts.org/api/v2/product/${candidate}.json?fields=${encodeURIComponent(fields)}`;
+      const json = await fetchWithTimeout(url, 7000);
+      if (json?.status === 1 && json?.product) {
+        product = json.product;
+        matchedBarcode = candidate;
+        break;
+      }
     }
 
-    const food = mapOpenFoodFactsProduct(json.product, barcode);
+    if (!product) {
+      return res.status(404).json({
+        error: 'No product found for that barcode in Open Food Facts. Try manual search by name.',
+      });
+    }
+
+    const food = mapOpenFoodFactsProduct(product, matchedBarcode);
     if (!food.name || !(food.kcalPer100g >= 0)) {
       return res.status(404).json({ error: 'Barcode found, but nutrition data is incomplete.' });
     }
