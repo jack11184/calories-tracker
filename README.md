@@ -2,7 +2,7 @@
 
 A full-stack calorie and nutrition tracking web app. Create an account, log in from any device, and track your calories and macros in the cloud.
 
-Live site: [faithful-solace.railway.app](https://faithful-solace.railway.app)
+Live site: [Calroies Tracker](https://calories-tracker-production.up.railway.app/)
 
 ---
 
